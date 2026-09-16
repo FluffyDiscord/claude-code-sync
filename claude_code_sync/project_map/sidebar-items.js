@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["canonical_id","encode_project_path","ensure_no_encoding_collisions","local_project_dir","normalize_project_path","repo_dir_name","validate"],"type":["ProjectMap"]};
