@@ -275,7 +275,11 @@ impl Scm for GitScm {
                 .with_context(|| format!("Failed to check out '{remote}/{branch}'"));
         }
 
-        let merge = self.git_output(&["merge", "--no-edit", "FETCH_HEAD"])?;
+        // Remote wins a conflicting hunk, as it wins the copy into ~/.claude on
+        // pull. Machine-written config (`lastUpdated` stamps in plugin
+        // manifests) otherwise conflicts on nearly every two-machine sync.
+        // Transcripts and memory indexes merge by union and never conflict.
+        let merge = self.git_output(&["merge", "--no-edit", "-X", "theirs", "FETCH_HEAD"])?;
         if merge.status.success() {
             return Ok(());
         }
@@ -440,28 +444,37 @@ mod tests {
     }
 
     #[test]
-    fn a_conflicting_pull_fails_and_leaves_the_repository_as_it_was() {
+    fn a_conflicting_hunk_is_resolved_in_favour_of_the_remote() {
+        // Plugin manifests rewrite `lastUpdated` on every machine; pull lets
+        // the remote copy win in ~/.claude, so the repository merge does too.
+        let (_root, machine, workdir, branch) =
+            two_diverged_machines(Some("known_marketplaces.json"));
+
+        machine.pull("origin", &branch).unwrap();
+
+        assert_eq!(
+            std::fs::read_to_string(workdir.join("known_marketplaces.json")).unwrap(),
+            "from the second\n"
+        );
+        assert!(!machine.has_changes().unwrap(), "the merge is committed");
+    }
+
+    #[test]
+    fn a_pull_git_refuses_to_start_leaves_the_repository_as_it_was() {
         let (_root, machine, workdir, branch) = two_diverged_machines(Some("both-touched.txt"));
         let before = machine.current_commit_hash().unwrap();
+        std::fs::write(workdir.join("both-touched.txt"), "uncommitted\n").unwrap();
 
         let error = machine
             .pull("origin", &branch)
-            .expect_err("a content conflict cannot be resolved for the user")
+            .expect_err("git will not merge over uncommitted work")
             .to_string();
 
-        assert!(error.contains("both-touched.txt"), "unexpected: {error}");
-        assert_eq!(
-            machine.current_commit_hash().unwrap(),
-            before,
-            "a failed pull moves nothing"
-        );
-        assert!(
-            !machine.has_changes().unwrap(),
-            "no conflict markers are left in the working tree"
-        );
+        assert!(error.contains("Nothing was merged"), "unexpected: {error}");
+        assert_eq!(machine.current_commit_hash().unwrap(), before);
         assert_eq!(
             std::fs::read_to_string(workdir.join("both-touched.txt")).unwrap(),
-            "from the first\n"
+            "uncommitted\n"
         );
     }
 
