@@ -169,6 +169,13 @@ pub fn push_history(
 
     let state = SyncState::load()?;
     let repo = scm::open(&state.sync_repo_path)?;
+    let merge_is_unfinished = repo.has_unfinished_merge();
+    if merge_is_unfinished {
+        anyhow::bail!(
+            "The sync repository has a merge an interrupted pull left unfinished. \
+             Run `claude-code-sync pull` to settle or undo it first."
+        );
+    }
     let mut filter = FilterConfig::load()?;
 
     // Override exclude_attachments if specified in command
@@ -336,9 +343,8 @@ pub fn push_history(
 
     // Interactive confirmation
     if interactive && interactive_conflict::is_interactive() {
-        let confirm = Confirm::new("Do you want to proceed with pushing these changes?")
+        let confirm = Confirm::new("Push?")
             .with_default(true)
-            .with_help_message("This will commit and push to the sync repository")
             .prompt()
             .context("Failed to get confirmation")?;
 

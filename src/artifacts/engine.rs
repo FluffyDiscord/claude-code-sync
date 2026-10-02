@@ -618,6 +618,8 @@ pub struct PullPlan {
     pub repo_root: PathBuf,
     /// The configured external merge tool, offered when a file differs.
     pub merge_tool: String,
+    /// Whether the overwrite prompt starts on the merge tool.
+    pub prefer_merge_tool: bool,
     /// The repo paths this machine will hold afterwards, for the next pull to
     /// tell a deletion from a file it never had.
     pub tracked_after: TrackedPaths,
@@ -799,6 +801,7 @@ pub fn plan_pull(claude_dir: &Path, repo_root: &Path, filter: &FilterConfig) -> 
         claude_dir: claude_dir.to_path_buf(),
         repo_root: repo_root.to_path_buf(),
         merge_tool: filter.merge_tool.clone(),
+        prefer_merge_tool: filter.prefer_merge_tool,
         tracks_deletions: active_categories(filter).any(|desc| desc.mirror_deletes),
         ..Default::default()
     };
@@ -973,8 +976,13 @@ pub fn apply_pull(plan: &PullPlan, interactive: bool) -> Result<ArtifactReport> 
     for write in &plan.overwrites {
         let bytes = machine_bytes(descriptor(write.category), &plan.tokens, &write.repo_path)?;
         let bytes = if prompt_overwrites {
-            match crate::merge_tool::resolve_overwrite(&plan.merge_tool, &write.local_path, &bytes)?
-            {
+            let resolved = crate::merge_tool::resolve_overwrite(
+                &plan.merge_tool,
+                plan.prefer_merge_tool,
+                &write.local_path,
+                &bytes,
+            )?;
+            match resolved {
                 Some(resolved) => resolved,
                 None => {
                     counts_for(&mut by_category, write.category).skipped += 1;
@@ -1070,13 +1078,10 @@ fn confirm_executable(local_path: &Path) -> bool {
         .file_name()
         .map(|n| n.to_string_lossy().to_string())
         .unwrap_or_else(|| local_path.display().to_string());
-    inquire::Confirm::new(&format!(
-        "'{file_name}' is executable on another machine. Make it executable here too?"
-    ))
-    .with_default(true)
-    .with_help_message("Declining leaves the file as it is")
-    .prompt()
-    .unwrap_or(false)
+    inquire::Confirm::new(&format!("Make '{file_name}' executable here too?"))
+        .with_default(true)
+        .prompt()
+        .unwrap_or(false)
 }
 
 /// Ask before removing a local file the sync repo no longer has.
@@ -1085,13 +1090,11 @@ fn confirm_deletion(local_path: &Path) -> bool {
         .file_name()
         .map(|n| n.to_string_lossy().to_string())
         .unwrap_or_else(|| local_path.display().to_string());
-    inquire::Confirm::new(&format!(
-        "'{file_name}' was deleted on another machine. Delete it here too?"
-    ))
-    .with_default(true)
-    .with_help_message("Declining keeps the local file; it is pushed back on the next push")
-    .prompt()
-    .unwrap_or(false)
+    inquire::Confirm::new(&format!("Delete '{file_name}' here too?"))
+        .with_default(true)
+        .with_help_message("No: the next push restores it")
+        .prompt()
+        .unwrap_or(false)
 }
 
 /// Globs for the managed ignore block: defense-in-depth behind the code-level
