@@ -287,6 +287,11 @@ pub fn push_history(
         &state.sync_repo_path,
         &filter,
     )?;
+    crate::artifacts::engine::record_synced_hashes(
+        &claude_home_dir()?,
+        &state.sync_repo_path,
+        &filter,
+    )?;
     crate::artifacts::engine::ensure_ignore_files(&state.sync_repo_path, filter.backend()?)?;
 
     // ============================================================================

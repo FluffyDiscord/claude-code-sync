@@ -50,11 +50,11 @@ fn settle_conflict(
     can_ask: bool,
     filter: &FilterConfig,
 ) -> Result<scm::ConflictChoice> {
-    let differing_only_in_dates = match (&file.local, &file.remote) {
+    let later_dates_merged = match (&file.local, &file.remote) {
         (Some(local), Some(remote)) => keep_later_timestamps(local, remote),
         _ => None,
     };
-    if let Some(merged) = differing_only_in_dates {
+    if let Some(merged) = later_dates_merged {
         println!("  {} {}: kept the later dates", "✓".green(), file.path);
         return Ok(scm::ConflictChoice::WriteMerged(merged));
     }
@@ -162,8 +162,9 @@ pub fn pull_history(
     // ============================================================================
     // ARTIFACT PULL PLAN (read-only, so the snapshot below can cover it)
     // ============================================================================
-    let artifact_plan =
+    let mut artifact_plan =
         crate::artifacts::engine::plan_pull(&claude_home_dir()?, &state.sync_repo_path, &filter)?;
+    artifact_plan.can_ask = interactive_conflict::is_interactive();
 
     // ============================================================================
     // SNAPSHOT CREATION: Only backup files that will actually change
@@ -563,9 +564,14 @@ pub fn pull_history(
     }
 
     // ============================================================================
-    // APPLY ARTIFACT PULL PLAN (remote wins; snapshot already covers changes)
+    // APPLY ARTIFACT PULL PLAN (remote-only changes win; snapshot covers changes)
     // ============================================================================
     let artifact_report = crate::artifacts::engine::apply_pull(&artifact_plan, interactive)?;
+    crate::artifacts::engine::record_synced_hashes(
+        &claude_home_dir()?,
+        &state.sync_repo_path,
+        &filter,
+    )?;
     if !artifact_plan.is_empty() {
         println!(
             "  {} Artifacts: {} created, {} overwritten locally, {} deleted locally",

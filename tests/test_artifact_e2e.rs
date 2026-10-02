@@ -314,6 +314,102 @@ fn test_full_pipeline_sync_converges_prompt_history() {
     assert_eq!(ts, vec![1000, 2000], "chronological order");
 }
 
+#[test]
+#[serial]
+fn test_sync_keeps_local_edits_and_deletions_made_since_the_last_sync() {
+    let _restore = EnvRestore::capture();
+    let repo = TempDir::new().unwrap();
+    init_git_repo(repo.path());
+    let machine = Machine::new(repo.path());
+    machine.activate();
+    let claude = machine.claude();
+    seed_full_claude_home(&claude);
+    fs::create_dir_all(claude.join("skills/review")).unwrap();
+    fs::write(claude.join("skills/review/SKILL.md"), b"# review\n").unwrap();
+    push_history(
+        Some("first"),
+        false,
+        None,
+        false,
+        false,
+        VerbosityLevel::Quiet,
+    )
+    .unwrap();
+
+    fs::write(
+        claude.join("skills/deploy/SKILL.md"),
+        b"# deploy, edited here\n",
+    )
+    .unwrap();
+    fs::remove_file(claude.join("skills/review/SKILL.md")).unwrap();
+    sync_bidirectional(Some("sync"), None, false, false, VerbosityLevel::Quiet).unwrap();
+
+    assert_eq!(
+        fs::read(claude.join("skills/deploy/SKILL.md")).unwrap(),
+        b"# deploy, edited here\n",
+        "the local edit survives the pull half of the sync"
+    );
+    assert_eq!(
+        fs::read(repo.path().join("artifacts/skills/deploy/SKILL.md")).unwrap(),
+        b"# deploy, edited here\n",
+        "and the push half sends it"
+    );
+    assert!(
+        !claude.join("skills/review/SKILL.md").exists(),
+        "the local deletion stands"
+    );
+    let tracked = git(repo.path(), &["ls-files"]);
+    assert!(
+        !tracked.contains("skills/review/SKILL.md"),
+        "and reaches the repo: {tracked}"
+    );
+}
+
+#[test]
+#[serial]
+fn test_pull_takes_what_only_the_remote_changed_and_the_later_dates() {
+    let _restore = EnvRestore::capture();
+    let repo = TempDir::new().unwrap();
+    init_git_repo(repo.path());
+    let skill = |claude: &Path, name: &str| claude.join("skills").join(name).join("SKILL.md");
+    let write_skill = |claude: &Path, name: &str, text: &str| {
+        fs::create_dir_all(claude.join("skills").join(name)).unwrap();
+        fs::write(skill(claude, name), text).unwrap();
+    };
+
+    let machine_a = Machine::new(repo.path());
+    machine_a.activate();
+    let a = machine_a.claude();
+    write_skill(&a, "remote-only", "v1\n");
+    write_skill(&a, "dates", "updated: 2026-01-01T00:00:00Z\n");
+    push_history(Some("A1"), false, None, false, false, VerbosityLevel::Quiet).unwrap();
+
+    let machine_b = Machine::new(repo.path());
+    machine_b.activate();
+    let b = machine_b.claude();
+    pull_history(false, None, false, VerbosityLevel::Quiet).unwrap();
+    write_skill(&b, "dates", "updated: 2026-01-03T00:00:00Z\n");
+
+    machine_a.activate();
+    write_skill(&a, "remote-only", "v2 from A\n");
+    write_skill(&a, "dates", "updated: 2026-01-02T00:00:00Z\n");
+    push_history(Some("A2"), false, None, false, false, VerbosityLevel::Quiet).unwrap();
+
+    machine_b.activate();
+    pull_history(false, None, false, VerbosityLevel::Quiet).unwrap();
+
+    assert_eq!(
+        fs::read_to_string(skill(&b, "remote-only")).unwrap(),
+        "v2 from A\n",
+        "a change only the remote made arrives"
+    );
+    assert_eq!(
+        fs::read_to_string(skill(&b, "dates")).unwrap(),
+        "updated: 2026-01-03T00:00:00Z\n",
+        "a file that differs only in dates keeps the later one"
+    );
+}
+
 /// Collects what the tool warns about, so a test can count the lines a pull
 /// prints rather than trust that it prints the right number.
 struct WarningCollector;

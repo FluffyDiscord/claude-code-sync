@@ -38,21 +38,16 @@ const STOP_THE_PULL: &str = "stop";
 pub fn resolve_overwrite(
     merge_tool: &str,
     prefer_merge_tool: bool,
+    question: &str,
     local_path: &Path,
     remote_bytes: &[u8],
 ) -> Result<Option<Vec<u8>>> {
-    let file_name = local_path
-        .file_name()
-        .map(|name| name.to_string_lossy().to_string())
-        .unwrap_or_else(|| local_path.display().to_string());
-
     let mut options = vec![TAKE_REMOTE, KEEP_LOCAL];
     if !merge_tool.trim().is_empty() {
         options.push(MERGE_EXTERNALLY);
     }
 
-    let question = format!("'{file_name}' differs:");
-    let choice = ask(&question, options, prefer_merge_tool, KEEP_LOCAL);
+    let choice = ask(question, options, prefer_merge_tool, KEEP_LOCAL);
 
     match choice {
         TAKE_REMOTE => Ok(Some(remote_bytes.to_vec())),
@@ -133,9 +128,13 @@ fn ask(
     let merge_position = options
         .iter()
         .position(|option| *option == MERGE_EXTERNALLY);
+    let local_position = options
+        .iter()
+        .position(|option| *option == KEEP_LOCAL)
+        .unwrap_or_default();
     let starting_cursor = match merge_position {
         Some(position) if prefer_merge_tool => position,
-        _ => 0,
+        _ => local_position,
     };
 
     Select::new(question, options)

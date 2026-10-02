@@ -16,6 +16,11 @@ use std::path::{Path, PathBuf};
 /// Repo-relative artifact paths, sorted.
 pub type TrackedPaths = BTreeSet<String>;
 
+/// Per repo-relative artifact path, the hash of the file as this machine holds
+/// it, taken when this machine and the repo last held the same version: the
+/// base that tells a local edit from a remote one.
+pub type SyncedHashes = BTreeMap<String, String>;
+
 /// File name under `~/.claude` holding the record for every sync repository.
 const TRACKED_FILE_NAME: &str = ".claude-code-sync-tracked.json";
 
@@ -23,6 +28,8 @@ const TRACKED_FILE_NAME: &str = ".claude-code-sync-tracked.json";
 struct TrackedRecord {
     #[serde(default)]
     repos: BTreeMap<String, TrackedPaths>,
+    #[serde(default)]
+    synced_hashes: BTreeMap<String, SyncedHashes>,
 }
 
 /// Where the record lives for a given Claude directory.
@@ -57,7 +64,10 @@ pub fn load(claude_dir: &Path, repo_root: &Path) -> TrackedPaths {
 /// deletes nothing and re-learns on the next sync.
 pub fn forget(claude_dir: &Path, repo_root: &Path) -> Result<()> {
     let mut record = read_record(claude_dir);
-    if record.repos.remove(&repo_key(repo_root)).is_none() {
+    let key = repo_key(repo_root);
+    let forgot_paths = record.repos.remove(&key).is_some();
+    let forgot_hashes = record.synced_hashes.remove(&key).is_some();
+    if !forgot_paths && !forgot_hashes {
         return Ok(());
     }
     write_record(claude_dir, &record)
@@ -68,6 +78,26 @@ pub fn save(claude_dir: &Path, repo_root: &Path, paths: TrackedPaths) -> Result<
     let mut record = read_record(claude_dir);
     record.repos.insert(repo_key(repo_root), paths);
     write_record(claude_dir, &record)
+}
+
+/// The versions this machine last agreed on with `repo_root`.
+pub fn load_synced_hashes(claude_dir: &Path, repo_root: &Path) -> SyncedHashes {
+    read_record(claude_dir)
+        .synced_hashes
+        .remove(&repo_key(repo_root))
+        .unwrap_or_default()
+}
+
+/// Record the versions this machine now agrees on with `repo_root`.
+pub fn save_synced_hashes(claude_dir: &Path, repo_root: &Path, hashes: SyncedHashes) -> Result<()> {
+    let mut record = read_record(claude_dir);
+    record.synced_hashes.insert(repo_key(repo_root), hashes);
+    write_record(claude_dir, &record)
+}
+
+/// The stable fingerprint stored in [`SyncedHashes`].
+pub fn hash_content(bytes: &[u8]) -> String {
+    crate::self_update::sha256_hex(bytes)
 }
 
 fn write_record(claude_dir: &Path, record: &TrackedRecord) -> Result<()> {

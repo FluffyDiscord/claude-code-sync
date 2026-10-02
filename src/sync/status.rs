@@ -84,6 +84,8 @@ pub fn show_status(show_conflicts: bool, show_files: bool) -> Result<()> {
             let differing = plan
                 .overwrites
                 .iter()
+                .chain(plan.changed_on_both_sides.iter())
+                .chain(plan.kept_local.iter())
                 .chain(plan.creates.iter())
                 .chain(plan.unions.iter())
                 .chain(plan.mode_fixes.iter())

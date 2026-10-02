@@ -143,12 +143,27 @@ block in the repo's `.gitignore` (or `.hgignore`) as defense in depth.
 
 ### Conflict policy and undo
 
-Artifact pulls are **remote-wins**: a file is only written when its bytes
-differ, every overwritten local file is snapshotted first, and files the pull
-creates are recorded so `claude-code-sync undo pull` is an exact inverse
-(restores overwritten bytes, deletes created files). Interactive pulls
-(`pull --interactive`) confirm each overwrite per file. `history.jsonl` is
-never overwritten — both push and pull merge the union of lines, so prompt
+**A pull only takes what the other machine changed.** Each machine remembers
+the version it last synced, so a pull compares all three:
+
+| Since the last sync | Pull does |
+|---|---|
+| Only the remote changed it | takes the remote version |
+| Only this machine changed it | keeps it; the next push sends it |
+| This machine deleted it (skills, agents, commands, rules, hooks) | leaves it deleted; the next push removes it. Edited remotely → restores it |
+| The remote deleted it, this machine edited it | keeps it and warns; the next push restores it |
+| Both changed it, dates only | keeps the later dates |
+| Both changed it | asks `remote` / `local` (and `merge` with a [merge tool](#external-merge-tool)) in a terminal; otherwise keeps this machine's version and warns |
+| Never synced on this machine | takes the remote version |
+
+> **Upgrading from 0.4.x:** run `claude-code-sync push` once before your first
+> `sync`. Older versions kept no record of the last synced version, so settings
+> edited since your last push would still be overwritten one last time.
+
+Every overwritten local file is snapshotted first, and files the pull creates
+are recorded, so `claude-code-sync undo pull` is an exact inverse. Interactive
+pulls (`pull --interactive`) confirm each overwrite per file. `history.jsonl`
+is never overwritten — both push and pull merge the union of lines, so prompt
 history only ever grows.
 
 > **Note (Git LFS):** if your `lfs_patterns` include `*.jsonl`, the repo copy
