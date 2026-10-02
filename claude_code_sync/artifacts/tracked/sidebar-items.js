@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["forget","hash_content","load","load_synced_hashes","record_path","save","save_synced_hashes"],"type":["SyncedHashes","TrackedPaths"]};
