@@ -77,10 +77,8 @@ fn a_remote_change_to_a_path_bearing_setting_arrives_rendered_for_this_machine()
     let a = TempDir::new().unwrap();
     let b = TempDir::new().unwrap();
     let setting = |claude: &Path, model: &str| {
-        format!(
-            "{{\"model\":\"{model}\",\"hook\":\"{}/hooks/run.sh\"}}",
-            claude.display()
-        )
+        let hook = format!("{}/hooks/run.sh", claude.display());
+        serde_json::json!({ "model": model, "hook": hook }).to_string()
     };
     write(&a.path().join("settings.json"), &setting(a.path(), "opus"));
     push(a.path(), repo.path());
