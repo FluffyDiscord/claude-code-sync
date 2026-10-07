@@ -284,4 +284,4 @@ This means your local repository is up to date with the remote. This is normal i
 
 - Mercurial documentation: [https://www.mercurial-scm.org/wiki/](https://www.mercurial-scm.org/wiki/)
 - Bitbucket documentation: [https://support.atlassian.com/bitbucket-cloud/](https://support.atlassian.com/bitbucket-cloud/)
-- `claude-code-sync` issues: [https://github.com/perfectra1n/claude-code-sync/issues](https://github.com/perfectra1n/claude-code-sync/issues)
+- `claude-code-sync` issues: [https://github.com/FluffyDiscord/claude-code-sync/issues](https://github.com/FluffyDiscord/claude-code-sync/issues)

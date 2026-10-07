@@ -152,8 +152,8 @@ pub mod report;
 ///
 /// Resolves the latest (or a requested) release, downloads the asset built for
 /// this platform, verifies it against the published SHA-256, and swaps it in
-/// for the running executable. Defers to the package manager when one owns
-/// the install (Nix, Homebrew, Scoop, cargo).
+/// for the running executable. Defers to cargo when `cargo install` owns the
+/// binary.
 pub mod self_update;
 
 /// Core synchronization logic for pushing and pulling conversation history.

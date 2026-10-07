@@ -1,8 +1,7 @@
 # claude-code-sync
 
-[![CI](https://github.com/perfectra1n/claude-code-sync/actions/workflows/ci.yml/badge.svg)](https://github.com/perfectra1n/claude-code-sync/actions/workflows/ci.yml)
-[![Release](https://github.com/perfectra1n/claude-code-sync/actions/workflows/release.yml/badge.svg)](https://github.com/perfectra1n/claude-code-sync/actions/workflows/release.yml)
-[![Documentation](https://github.com/perfectra1n/claude-code-sync/actions/workflows/docs.yml/badge.svg)](https://github.com/perfectra1n/claude-code-sync/actions/workflows/docs.yml)
+[![CI](https://github.com/FluffyDiscord/claude-code-sync/actions/workflows/ci.yml/badge.svg)](https://github.com/FluffyDiscord/claude-code-sync/actions/workflows/ci.yml)
+[![Release](https://github.com/FluffyDiscord/claude-code-sync/actions/workflows/release.yml/badge.svg)](https://github.com/FluffyDiscord/claude-code-sync/actions/workflows/release.yml)
 
 A Rust CLI tool for syncing Claude Code conversation history across machines using git repositories.
 
@@ -10,9 +9,7 @@ A Rust CLI tool for syncing Claude Code conversation history across machines usi
 
 ## Documentation
 
-📚 **[View API Documentation](https://perfectra1n.github.io/claude-code-sync/)** - Complete API reference and code documentation
-
-To build and view documentation locally:
+To build and view the API documentation locally:
 ```bash
 # Build and open documentation in your browser
 cargo doc --open --no-deps --all-features
@@ -316,7 +313,7 @@ git tag v0.4.0 && git push origin v0.4.0
 
 A tag release-please creates works the same way; a tag you push by hand gets a
 release created for it with generated notes. Grab the asset for your platform
-from the [releases page](https://github.com/perfectra1n/claude-code-sync/releases).
+from the [releases page](https://github.com/FluffyDiscord/claude-code-sync/releases).
 
 To build all of them locally instead — one Linux or macOS host, no Apple
 hardware and no Windows — run `bin/release.sh` (needs `cargo-zigbuild`, zig and
@@ -328,111 +325,9 @@ generated from zig's own API-set definition.
 
 ## Installation
 
-### Install script (Recommended)
+### Download a release (Recommended)
 
-**Linux / macOS:**
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/perfectra1n/claude-code-sync/main/install.sh | sh
-```
-
-**Windows (PowerShell):**
-
-```powershell
-irm https://raw.githubusercontent.com/perfectra1n/claude-code-sync/main/install.ps1 | iex
-```
-
-The scripts detect your OS and CPU (x86_64 or ARM64), download the matching
-release binary, verify it against the published SHA-256 checksum, and install
-it **without sudo**:
-
-| Platform | Installs to | PATH |
-|----------|-------------|------|
-| Linux / macOS | `~/.local/bin` | Prints the `export` line if it is missing |
-| Windows | `%LOCALAPPDATA%\Programs\claude-code-sync` | Added to your user PATH automatically |
-
-On Linux the script installs the static **musl** build by default. It has no
-dependencies, so it runs on any distro, including Alpine and NixOS.
-
-**Options:**
-
-```bash
-# Pin a version, choose the directory, or pick the glibc build
-curl -fsSL https://raw.githubusercontent.com/perfectra1n/claude-code-sync/main/install.sh | sh -s -- --version v0.3.3 --dir /usr/local/bin --libc gnu
-```
-
-```powershell
-# `irm | iex` cannot take arguments, so PowerShell options are environment variables
-$env:CCS_VERSION = "v0.3.3"; $env:CCS_INSTALL_DIR = "C:\tools"
-irm https://raw.githubusercontent.com/perfectra1n/claude-code-sync/main/install.ps1 | iex
-```
-
-The shell script reads the same `CCS_VERSION`, `CCS_INSTALL_DIR`, and `CCS_LIBC`
-variables. Set `CCS_NO_PATH=1` to stop the PowerShell script from editing PATH.
-
-**To update:** run `claude-code-sync self-update`, or re-run the install command.
-
-### Homebrew (macOS / Linux)
-
-This repository doubles as a Homebrew tap. The URL is required because the
-repository is not named `homebrew-*`:
-
-```bash
-brew tap perfectra1n/claude-code-sync https://github.com/perfectra1n/claude-code-sync
-brew install perfectra1n/claude-code-sync/claude-code-sync
-```
-
-**To update:** `brew upgrade claude-code-sync`
-
-### Scoop (Windows)
-
-This repository doubles as a Scoop bucket:
-
-```powershell
-scoop bucket add claude-code-sync https://github.com/perfectra1n/claude-code-sync
-scoop install claude-code-sync/claude-code-sync
-```
-
-**To update:** `scoop update claude-code-sync`
-
-### Nix
-
-```bash
-# Run without installing
-nix run github:perfectra1n/claude-code-sync -- --help
-
-# Install into your profile
-nix profile install github:perfectra1n/claude-code-sync
-```
-
-Or add `github:perfectra1n/claude-code-sync` as a flake input and use
-`packages.${system}.default`. The package puts `git` on its PATH as a fallback,
-so your own `git` (with its config and credential helpers) still takes precedence.
-
-### Cargo
-
-The crate is published on [crates.io](https://crates.io/crates/claude-code-sync).
-With [`cargo-binstall`](https://github.com/cargo-bins/cargo-binstall), Cargo
-downloads the prebuilt release binary instead of compiling:
-
-```bash
-cargo binstall claude-code-sync     # prebuilt binary, seconds
-cargo install --locked claude-code-sync   # build from source
-```
-
-With `cargo-binstall` installed, `mise use -g cargo:claude-code-sync` uses the same prebuilt binaries.
-
-To track unreleased changes on `main`:
-
-```bash
-cargo install --locked --git https://github.com/perfectra1n/claude-code-sync
-```
-
-**To update:** re-run the same command.
-
-### Manual download
-
-Every [release](https://github.com/perfectra1n/claude-code-sync/releases) ships
+Every [release](https://github.com/FluffyDiscord/claude-code-sync/releases) ships
 these assets, each with a `.sha256` checksum file alongside it:
 
 | Platform | Asset |
@@ -446,18 +341,31 @@ these assets, each with a `.sha256` checksum file alongside it:
 | Windows x86_64 | `claude-code-sync-windows-x86_64.exe.zip` |
 | Windows ARM64 | `claude-code-sync-windows-aarch64.exe.zip` |
 
-The ARM64 Linux and Windows builds start with the first release after v0.3.3.
-
-A container image is also published to `ghcr.io/perfectra1n/claude-code-sync`.
-
-### From Source
+Linux x86_64 example:
 
 ```bash
-git clone https://github.com/perfectra1n/claude-code-sync
-cd claude-code-sync
-cargo install --locked --path .
-claude-code-sync --help
+mkdir -p ~/.local/bin
+curl -fsSL https://github.com/FluffyDiscord/claude-code-sync/releases/latest/download/claude-code-sync-linux-x86_64-musl.tar.gz \
+  | tar -xz -C ~/.local/bin
 ```
+
+`~/.local/bin` must be on your `PATH`.
+
+The static **musl** builds have no dependencies, so they run on any distro,
+including Alpine and NixOS.
+
+**To update:** `claude-code-sync self-update`
+
+### Cargo
+
+```bash
+cargo install --locked --git https://github.com/FluffyDiscord/claude-code-sync
+```
+
+**To update:** re-run the same command.
+
+> The `claude-code-sync` crate on crates.io is the original upstream project,
+> not this fork.
 
 ## Quick Start
 
@@ -895,10 +803,9 @@ claude-code-sync self-update --yes
 It shows the version change and asks before replacing the binary. Outside a
 terminal it changes nothing unless you pass `--yes`.
 
-If the binary was installed by a package manager (Homebrew, Scoop, Nix, or
-Cargo), `self-update` declines and prints that manager's upgrade command, so
-the package manager's records stay accurate. Pass `--force` to replace the
-binary anyway.
+If `cargo install` put the binary in `~/.cargo/bin`, `self-update` declines and
+prints the cargo command instead, so cargo's records stay accurate. Pass
+`--force` to replace the binary anyway.
 
 ## Conflict Resolution
 

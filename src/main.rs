@@ -306,7 +306,7 @@ enum Commands {
         #[arg(long, value_name = "VERSION")]
         to: Option<String>,
 
-        /// Reinstall even if already current, or if a package manager owns the binary
+        /// Reinstall even if already current, or if `cargo install` owns the binary
         #[arg(long)]
         force: bool,
 

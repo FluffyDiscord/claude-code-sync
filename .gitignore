@@ -46,6 +46,3 @@ test-backup/
 # Logs
 *.log
 *.log.*
-
-# nix build output
-/result

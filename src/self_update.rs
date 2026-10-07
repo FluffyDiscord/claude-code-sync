@@ -40,53 +40,13 @@ fn release_asset() -> Option<&'static str> {
     Some(asset)
 }
 
-/// A package manager that owns the installed binary. Replacing its file in
-/// place would desync the manager's records (or fail on a read-only store),
-/// so `self-update` defers to it.
-#[derive(Debug, PartialEq, Eq)]
-enum Manager {
-    Nix,
-    Homebrew,
-    Scoop,
-    Cargo,
+fn is_installed_by_cargo(exe: &Path) -> bool {
+    let path = exe.to_string_lossy().replace('\\', "/").to_lowercase();
+    path.contains("/.cargo/bin/")
 }
 
-impl Manager {
-    fn detect(exe: &Path) -> Option<Self> {
-        // Normalise separators so one set of patterns covers Windows paths.
-        let path = exe.to_string_lossy().replace('\\', "/").to_lowercase();
-        if path.starts_with("/nix/store/") {
-            Some(Manager::Nix)
-        } else if path.contains("/cellar/") || path.contains("/homebrew/") {
-            Some(Manager::Homebrew)
-        } else if path.contains("/scoop/apps/") {
-            Some(Manager::Scoop)
-        } else if path.contains("/.cargo/bin/") {
-            Some(Manager::Cargo)
-        } else {
-            None
-        }
-    }
-
-    fn name(&self) -> &'static str {
-        match self {
-            Manager::Nix => "Nix",
-            Manager::Homebrew => "Homebrew",
-            Manager::Scoop => "Scoop",
-            Manager::Cargo => "cargo",
-        }
-    }
-
-    fn upgrade_hint(&self) -> &'static str {
-        match self {
-            Manager::Nix => "nix profile upgrade claude-code-sync  (or bump your flake input)",
-            Manager::Homebrew => "brew upgrade claude-code-sync",
-            Manager::Scoop => "scoop update claude-code-sync",
-            Manager::Cargo => {
-                "cargo binstall claude-code-sync  (or: cargo install claude-code-sync)"
-            }
-        }
-    }
+fn get_cargo_install_command() -> String {
+    format!("cargo install --locked --git {REPO_URL}")
 }
 
 /// Normalise a user-supplied version to a release tag: `0.3.3` -> `v0.3.3`.
@@ -230,7 +190,7 @@ fn install_binary(binary: &[u8]) -> Result<()> {
 ///
 /// With `check_only`, report whether an update is available and change
 /// nothing. `force` reinstalls even when already current, and overrides the
-/// refusal to touch a binary owned by a package manager.
+/// refusal to touch a binary `cargo install` put in place.
 pub fn self_update(
     check_only: bool,
     target: Option<&str>,
@@ -276,22 +236,21 @@ pub fn self_update(
 
     let exe = std::env::current_exe().context("cannot locate the running executable")?;
     let exe = exe.canonicalize().unwrap_or(exe);
-    if let Some(manager) = Manager::detect(&exe) {
-        if !force {
-            bail!(
-                "{} is managed by {}; update it with:\n  {}\n(pass --force to replace it anyway)",
-                exe.display(),
-                manager.name(),
-                manager.upgrade_hint()
-            );
-        }
+    let installed_by_cargo = is_installed_by_cargo(&exe);
+    if installed_by_cargo && !force {
+        bail!(
+            "{} is managed by cargo; update it with:\n  {}\n(pass --force to replace it anyway)",
+            exe.display(),
+            get_cargo_install_command()
+        );
     }
 
     let asset = release_asset().ok_or_else(|| {
         anyhow!(
-            "no prebuilt release for {}-{}; update with: cargo install claude-code-sync",
+            "no prebuilt release for {}-{}; update with: {}",
             std::env::consts::OS,
-            std::env::consts::ARCH
+            std::env::consts::ARCH,
+            get_cargo_install_command()
         )
     })?;
     let url = format!("{REPO_URL}/releases/download/{tag}/{asset}");
@@ -389,30 +348,18 @@ mod tests {
     }
 
     #[test]
-    fn manager_detection_from_install_path() {
-        let detect = |p: &str| Manager::detect(Path::new(p));
-        assert_eq!(
-            detect("/nix/store/abc-claude-code-sync-0.3.3/bin/claude-code-sync"),
-            Some(Manager::Nix)
-        );
-        assert_eq!(
-            detect("/opt/homebrew/Cellar/claude-code-sync/0.3.3/bin/claude-code-sync"),
-            Some(Manager::Homebrew)
-        );
-        assert_eq!(
-            detect("/home/linuxbrew/.linuxbrew/Cellar/claude-code-sync/0.3.3/bin/claude-code-sync"),
-            Some(Manager::Homebrew)
-        );
-        assert_eq!(
-            detect(r"C:\Users\me\scoop\apps\claude-code-sync\current\claude-code-sync.exe"),
-            Some(Manager::Scoop)
-        );
-        assert_eq!(
-            detect("/home/me/.cargo/bin/claude-code-sync"),
-            Some(Manager::Cargo)
-        );
-        assert_eq!(detect("/home/me/.local/bin/claude-code-sync"), None);
-        assert_eq!(detect("/usr/local/bin/claude-code-sync"), None);
+    fn cargo_install_detected_from_install_path() {
+        let detect = |p: &str| is_installed_by_cargo(Path::new(p));
+        assert!(detect("/home/me/.cargo/bin/claude-code-sync"));
+        assert!(detect(r"C:\Users\me\.cargo\bin\claude-code-sync.exe"));
+        assert!(!detect("/home/me/.local/bin/claude-code-sync"));
+        assert!(!detect("/usr/local/bin/claude-code-sync"));
+        assert!(!detect(
+            "/nix/store/abc-claude-code-sync-0.3.3/bin/claude-code-sync"
+        ));
+        assert!(!detect(
+            "/opt/homebrew/Cellar/claude-code-sync/0.3.3/bin/claude-code-sync"
+        ));
     }
 
     #[test]

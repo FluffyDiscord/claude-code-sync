@@ -4,9 +4,8 @@ name: Build Binaries
 #   - release.yml calls it with a tag, and every asset is uploaded to that release.
 #   - pull requests that touch the build inputs run it without a tag, so a
 #     broken target surfaces in review rather than halfway through a release.
-# Asset names are a public interface: install.sh, install.ps1, the
-# cargo-binstall metadata in Cargo.toml, `self-update`, and
-# scripts/update-packaging.sh all construct them. Rename with care.
+# Asset names are a public interface: `self-update` and the README's download
+# links construct them. Rename with care.
 on:
   workflow_call:
     inputs:
