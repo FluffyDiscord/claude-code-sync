@@ -78,6 +78,25 @@ pub fn is_interactive() -> bool {
     atty::is(atty::Stream::Stdin) && atty::is(atty::Stream::Stdout)
 }
 
+/// Ask `question` in a terminal (default no). Anywhere else only `assume_yes`
+/// approves, and `rerun_hint` tells the user how to re-run.
+pub fn ask_confirmation(question: &str, rerun_hint: &str, assume_yes: bool) -> bool {
+    if assume_yes {
+        return true;
+    }
+
+    let interactive = is_interactive();
+    if !interactive {
+        println!("  {} {}", "!".yellow(), rerun_hint);
+        return false;
+    }
+
+    Confirm::new(question)
+        .with_default(false)
+        .prompt()
+        .unwrap_or(false)
+}
+
 /// Display detailed conflict information
 fn display_conflict_details(conflict: &Conflict) {
     println!("\n{}", "=".repeat(80).cyan());

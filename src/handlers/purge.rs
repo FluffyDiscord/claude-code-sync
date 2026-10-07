@@ -139,25 +139,16 @@ fn describe(plan: &PurgePlan) {
 }
 
 fn confirmed(plan: &PurgePlan, assume_yes: bool) -> bool {
-    if assume_yes {
-        return true;
-    }
-    if !crate::interactive_conflict::is_interactive() {
-        println!(
-            "  {} Re-run with {} to delete, or {} to see the list again",
-            "!".yellow(),
-            "--yes".bold(),
-            "--dry-run".bold()
-        );
-        return false;
-    }
-    inquire::Confirm::new(&format!(
+    let question = format!(
         "Delete {} sessions here and in the sync repo?",
         plan.targets.len()
-    ))
-    .with_default(false)
-    .prompt()
-    .unwrap_or(false)
+    );
+    let rerun_hint = format!(
+        "Re-run with {} to delete, or {} to see the list again",
+        "--yes".bold(),
+        "--dry-run".bold()
+    );
+    crate::interactive_conflict::ask_confirmation(&question, &rerun_hint, assume_yes)
 }
 
 fn report_outcome(report: &PurgeReport, committed: bool) {

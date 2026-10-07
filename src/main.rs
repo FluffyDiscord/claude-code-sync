@@ -309,6 +309,10 @@ enum Commands {
         /// Reinstall even if already current, or if a package manager owns the binary
         #[arg(long)]
         force: bool,
+
+        /// Install without asking (required outside a terminal)
+        #[arg(short = 'y', long)]
+        yes: bool,
     },
 
     /// Clean up old snapshot files
@@ -790,8 +794,13 @@ fn main() -> Result<()> {
 
             handle_cleanup_snapshots(dry_run, max_count, max_age_days, interactive, verbosity)?;
         }
-        Commands::SelfUpdate { check, to, force } => {
-            self_update::self_update(check, to.as_deref(), force)?;
+        Commands::SelfUpdate {
+            check,
+            to,
+            force,
+            yes,
+        } => {
+            self_update::self_update(check, to.as_deref(), force, yes)?;
         }
     }
 

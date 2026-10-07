@@ -5,7 +5,7 @@ use sha2::{Digest, Sha256};
 use std::io::Read;
 use std::path::Path;
 
-const REPO_URL: &str = "https://github.com/perfectra1n/claude-code-sync";
+const REPO_URL: &str = env!("CARGO_PKG_REPOSITORY");
 const BIN_NAME: &str = if cfg!(windows) {
     "claude-code-sync.exe"
 } else {
@@ -231,7 +231,12 @@ fn install_binary(binary: &[u8]) -> Result<()> {
 /// With `check_only`, report whether an update is available and change
 /// nothing. `force` reinstalls even when already current, and overrides the
 /// refusal to touch a binary owned by a package manager.
-pub fn self_update(check_only: bool, target: Option<&str>, force: bool) -> Result<()> {
+pub fn self_update(
+    check_only: bool,
+    target: Option<&str>,
+    force: bool,
+    assume_yes: bool,
+) -> Result<()> {
     let current = parse_tag(env!("CARGO_PKG_VERSION"))?;
     let tag = match target {
         Some(v) => normalize_tag(v),
@@ -290,6 +295,18 @@ pub fn self_update(check_only: bool, target: Option<&str>, force: bool) -> Resul
         )
     })?;
     let url = format!("{REPO_URL}/releases/download/{tag}/{asset}");
+
+    let question = format!("Replace claude-code-sync {current} with {wanted}?");
+    let rerun_hint = format!(
+        "Re-run with {} to install {current} → {wanted}",
+        "--yes".bold()
+    );
+    let approved =
+        crate::interactive_conflict::ask_confirmation(&question, &rerun_hint, assume_yes);
+    if !approved {
+        println!("  {}", "Nothing was changed.".yellow());
+        return Ok(());
+    }
 
     println!("{} {} ({})...", "Downloading".cyan(), asset, tag);
     let archive = download(&url)?;

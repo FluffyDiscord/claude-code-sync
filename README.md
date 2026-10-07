@@ -887,7 +887,13 @@ claude-code-sync self-update
 
 # Install a specific release (including downgrades)
 claude-code-sync self-update --to v0.3.2
+
+# Skip the confirmation (scripts)
+claude-code-sync self-update --yes
 ```
+
+It shows the version change and asks before replacing the binary. Outside a
+terminal it changes nothing unless you pass `--yes`.
 
 If the binary was installed by a package manager (Homebrew, Scoop, Nix, or
 Cargo), `self-update` declines and prints that manager's upgrade command, so
