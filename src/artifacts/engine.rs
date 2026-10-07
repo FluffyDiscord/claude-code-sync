@@ -162,6 +162,15 @@ struct CollectedFile {
     rel: PathBuf,
 }
 
+fn walk_honoring_gitignores_inside(base: &Path) -> ignore::Walk {
+    ignore::WalkBuilder::new(base)
+        .standard_filters(false)
+        .git_ignore(true)
+        .require_git(false)
+        .follow_links(false)
+        .build()
+}
+
 /// Enumerate a category's files on disk. Missing sources yield an empty list;
 /// denied paths and oversized files are skipped (the latter counted).
 ///
@@ -205,12 +214,9 @@ fn collect(
             // Resolved once per project: in name-only mode it reads a transcript.
             let mut project_names: std::collections::HashMap<String, String> =
                 std::collections::HashMap::new();
-            for entry in walkdir::WalkDir::new(&base)
-                .follow_links(false)
-                .into_iter()
-                .filter_map(|e| e.ok())
-            {
-                if !entry.file_type().is_file() {
+            for entry in walk_honoring_gitignores_inside(&base).filter_map(|e| e.ok()) {
+                let is_file = entry.file_type().is_some_and(|kind| kind.is_file());
+                if !is_file {
                     continue;
                 }
                 let abs = entry.path();
@@ -1054,7 +1060,7 @@ pub fn plan_pull(claude_dir: &Path, repo_root: &Path, filter: &FilterConfig) -> 
             if edited_here_since_sync {
                 log::warn!(
                     "{} was deleted on another machine but edited here since; kept, \
-                     the next push brings it back",
+                     the next push brings it back unless a .gitignore excludes it",
                     local_path.display()
                 );
             } else {
@@ -1297,6 +1303,7 @@ const IGNORE_GLOBS: &[&str] = &[
     "sessions/",
     "**/cache/",
     "**/debug/",
+    "**/.trash/",
 ];
 
 const IGNORE_BLOCK_START: &str = "# >>> claude-code-sync managed block — do not edit inside";

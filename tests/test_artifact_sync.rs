@@ -239,6 +239,46 @@ fn test_denied_files_inside_categories_never_pushed() {
 }
 
 #[test]
+fn test_gitignored_files_inside_categories_never_pushed() {
+    let claude = TempDir::new().unwrap();
+    let repo = TempDir::new().unwrap();
+    seed_claude_dir(claude.path());
+    let skill = claude.path().join("skills/my-skill");
+    fs::write(skill.join(".gitignore"), b"__pycache__/\n").unwrap();
+    fs::create_dir_all(skill.join("__pycache__")).unwrap();
+    fs::write(skill.join("__pycache__/stats.pyc"), b"bytecode").unwrap();
+
+    push_artifacts(claude.path(), repo.path(), &all_on_filter()).unwrap();
+
+    let pushed_skill = repo.path().join("artifacts/skills/my-skill");
+    assert!(pushed_skill.join("SKILL.md").is_file());
+    assert!(pushed_skill.join(".gitignore").is_file());
+    assert!(!pushed_skill.join("__pycache__").exists());
+}
+
+#[test]
+fn test_newly_gitignored_files_are_removed_from_repo() {
+    let claude = TempDir::new().unwrap();
+    let repo = TempDir::new().unwrap();
+    seed_claude_dir(claude.path());
+    let skill = claude.path().join("skills/my-skill");
+    fs::create_dir_all(skill.join("__pycache__")).unwrap();
+    fs::write(skill.join("__pycache__/stats.pyc"), b"bytecode").unwrap();
+    let pushed_bytecode = repo
+        .path()
+        .join("artifacts/skills/my-skill/__pycache__/stats.pyc");
+
+    push_artifacts(claude.path(), repo.path(), &all_on_filter()).unwrap();
+    assert!(pushed_bytecode.is_file());
+
+    fs::write(skill.join(".gitignore"), b"__pycache__/\n").unwrap();
+    push_artifacts(claude.path(), repo.path(), &all_on_filter()).unwrap();
+
+    assert!(!pushed_bytecode.exists());
+    assert!(skill.join("__pycache__/stats.pyc").is_file());
+}
+
+#[test]
 fn test_push_unions_prompt_history() {
     let claude = TempDir::new().unwrap();
     let repo = TempDir::new().unwrap();

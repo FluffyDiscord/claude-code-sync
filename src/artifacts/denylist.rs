@@ -35,6 +35,7 @@ const DENIED_DIR_COMPONENTS: &[&str] = &[
     "statsig",
     "backups",
     "sessions",
+    ".trash",
 ];
 
 /// Returns true when a `~/.claude`-relative path must never be copied by
@@ -127,6 +128,7 @@ mod tests {
         assert!(is_denied(Path::new("debug/log.txt")));
         assert!(is_denied(Path::new("backups/old.json")));
         assert!(is_denied(Path::new("sessions/current")));
+        assert!(is_denied(Path::new("skills/.trash/1-a/x/SKILL.md")));
     }
 
     #[test]
