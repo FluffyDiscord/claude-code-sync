@@ -2,6 +2,8 @@
 //! report every session as Unchanged, including subagent sidechain transcripts
 //! that carry their parent session's interior `sessionId`.
 
+mod common;
+
 use std::fs;
 use std::io::Write;
 use std::path::Path;
@@ -9,6 +11,8 @@ use std::path::Path;
 use claude_code_sync::filter::FilterConfig;
 use claude_code_sync::sync::discovery::discover_sessions;
 use claude_code_sync::sync::push::{needs_copy, plan_push};
+use common::ConfigEnv;
+use serial_test::serial;
 use tempfile::TempDir;
 
 const PARENT_SESSION_ID: &str = "56d02190-2a2d-4a55-9ec1-38e34fb25e84";
@@ -52,7 +56,9 @@ fn seed_claude_projects(claude_dir: &Path) {
 }
 
 #[test]
+#[serial]
 fn test_second_push_plan_is_all_unchanged_despite_shared_session_id() {
+    let _env = ConfigEnv::new();
     let claude = TempDir::new().unwrap();
     let repo_projects = TempDir::new().unwrap();
     seed_claude_projects(claude.path());
@@ -89,7 +95,9 @@ fn test_second_push_plan_is_all_unchanged_despite_shared_session_id() {
 /// version wrote is normalized JSON, which differs byte for byte from the
 /// verbatim copy made today even though the conversation is identical.
 #[test]
+#[serial]
 fn an_unchanged_session_is_left_in_the_repository_as_it_is() {
+    let _env = ConfigEnv::new();
     let claude = TempDir::new().unwrap();
     let repo_projects = TempDir::new().unwrap();
     seed_claude_projects(claude.path());
@@ -130,7 +138,9 @@ fn an_unchanged_session_is_left_in_the_repository_as_it_is() {
 }
 
 #[test]
+#[serial]
 fn test_push_plan_detects_real_modification() {
+    let _env = ConfigEnv::new();
     let claude = TempDir::new().unwrap();
     let repo_projects = TempDir::new().unwrap();
     seed_claude_projects(claude.path());

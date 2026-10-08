@@ -2,12 +2,16 @@
 //! the project map, and the `use_project_name_only` fallback it must not
 //! disturb.
 
+mod common;
+
 use std::fs;
 use std::path::{Path, PathBuf};
 
 use claude_code_sync::filter::FilterConfig;
 use claude_code_sync::parser::ConversationSession;
 use claude_code_sync::sync::push::plan_push;
+use common::ConfigEnv;
+use serial_test::serial;
 use tempfile::TempDir;
 
 /// One session file under `<projects>/<encoded>/`, whose entries carry `cwd`
@@ -40,7 +44,9 @@ fn only_destination(
 }
 
 #[test]
+#[serial]
 fn an_unmapped_project_keeps_its_encoded_directory() {
+    let _env = ConfigEnv::new();
     let claude = TempDir::new().unwrap();
     let repo = TempDir::new().unwrap();
     let projects = claude.path().join("projects");
@@ -64,7 +70,9 @@ fn an_unmapped_project_keeps_its_encoded_directory() {
 }
 
 #[test]
+#[serial]
 fn name_only_keeps_the_whole_folder_name_hyphens_included() {
+    let _env = ConfigEnv::new();
     let claude = TempDir::new().unwrap();
     let repo = TempDir::new().unwrap();
     let projects = claude.path().join("projects");
@@ -114,7 +122,9 @@ fn name_only_pulls_back_into_the_project_it_was_pushed_from() {
 }
 
 #[test]
+#[serial]
 fn a_mapped_project_pushes_under_its_canonical_id() {
+    let _env = ConfigEnv::new();
     let claude = TempDir::new().unwrap();
     let repo = TempDir::new().unwrap();
     let projects = claude.path().join("projects");
@@ -143,7 +153,9 @@ fn a_mapped_project_pushes_under_its_canonical_id() {
 }
 
 #[test]
+#[serial]
 fn the_map_beats_name_only_so_two_checkouts_stay_apart() {
+    let _env = ConfigEnv::new();
     let claude = TempDir::new().unwrap();
     let repo = TempDir::new().unwrap();
     let projects = claude.path().join("projects");

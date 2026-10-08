@@ -94,7 +94,7 @@ pub struct ConversationEntry {
 /// every session alive at once — while sync only ever compares identity,
 /// recency, size and content hash. The messages of the one session being
 /// merged are read back from the file with [`ConversationSession::load_entries`].
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ConversationSession {
     /// Unique identifier for this conversation session
     ///

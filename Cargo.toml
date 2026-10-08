@@ -39,6 +39,7 @@ tempfile = "3.27.0"
 sha2 = "0.11.0"
 semver = "1.0.28"
 self-replace = "1.5.0"
+indicatif = { version = "0.18.6", features = ["rayon"] }
 
 # `self-update` networking and archive handling. Release assets are .tar.gz
 # everywhere except Windows, which ships .zip.

@@ -1,5 +1,6 @@
 use anyhow::{Context, Result};
 use colored::Colorize;
+use indicatif::ProgressIterator;
 use inquire::Confirm;
 use std::collections::HashMap;
 use std::fs;
@@ -257,7 +258,8 @@ pub fn push_history(
     // Track pushed conversations for operation record
     let mut pushed_conversations: Vec<ConversationSummary> = Vec::new();
 
-    for entry in &plan.entries {
+    let progress = crate::progress::bar(plan.entries.len(), "Copying sessions");
+    for entry in plan.entries.iter().progress_with(progress) {
         let session = &sessions[entry.session_index];
         let dest_path = projects_dir.join(&entry.relative_path);
 
@@ -362,7 +364,9 @@ pub fn push_history(
     // ============================================================================
     // COMMIT AND PUSH CHANGES
     // ============================================================================
-    repo.stage_all()?;
+    crate::progress::while_spinning(format!("{} changes...", "Staging".cyan()), || {
+        repo.stage_all()
+    })?;
 
     let has_changes = repo.has_changes()?;
     if has_changes {
@@ -401,7 +405,7 @@ pub fn push_history(
 
             match repo.push("origin", &branch_name) {
                 Ok(_) => println!("  {} Pushed to origin/{}", "✓".green(), branch_name),
-                Err(e) => log::warn!("Failed to push: {}", e),
+                Err(e) => log::warn!("Failed to push: {:#}", e),
             }
         }
 

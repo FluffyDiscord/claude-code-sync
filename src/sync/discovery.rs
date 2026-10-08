@@ -1,5 +1,6 @@
 use anyhow::{Context, Result};
 use colored::Colorize;
+use indicatif::ParallelProgressIterator;
 use rayon::prelude::*;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -7,6 +8,8 @@ use walkdir::WalkDir;
 
 use crate::filter::FilterConfig;
 use crate::parser::ConversationSession;
+
+use super::summary_cache::{CachedSummary, SummaryCache};
 
 /// Threshold for warning about large conversation files (10 MB)
 pub(crate) const LARGE_FILE_WARNING_THRESHOLD: u64 = 10 * 1024 * 1024;
@@ -36,6 +39,9 @@ pub(crate) fn claude_projects_dir() -> Result<PathBuf> {
 /// only gathers paths and the parsing runs across every core. Results keep the
 /// order the walk found them in, and each file is still streamed one line at a
 /// time, so the memory a machine needs does not grow with its history.
+///
+/// A transcript whose length and mtime match the previous run's is not read
+/// again; its summary comes from [`SummaryCache`].
 pub fn discover_sessions(
     base_path: &Path,
     filter: &FilterConfig,
@@ -55,15 +61,25 @@ pub fn discover_sessions(
         })
         .collect();
 
-    let sessions = transcripts
+    let cache = SummaryCache::load();
+    let progress = crate::progress::bar(transcripts.len(), "Reading transcripts");
+    let summaries: Vec<CachedSummary> = transcripts
         .par_iter()
-        .filter_map(|path| match ConversationSession::from_file(path) {
-            Ok(session) => Some(session),
+        .progress_with(progress)
+        .filter_map(|path| match cache.summarize(path) {
+            Ok(summary) => Some(summary),
             Err(e) => {
                 log::warn!("Failed to parse {}: {}", path.display(), e);
                 None
             }
         })
+        .collect();
+
+    cache.save(base_path, &summaries);
+
+    let sessions = summaries
+        .into_iter()
+        .map(|summary| summary.session)
         .collect();
 
     Ok(sessions)

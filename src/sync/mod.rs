@@ -6,6 +6,7 @@ pub mod push;
 mod remote;
 mod state;
 mod status;
+mod summary_cache;
 
 // Re-export public types and functions
 pub use init::{init_from_onboarding, init_sync_repo};

@@ -1,5 +1,6 @@
 use anyhow::{Context, Result};
 use colored::Colorize;
+use indicatif::ProgressIterator;
 use inquire::Confirm;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -480,7 +481,8 @@ pub fn pull_history(
     let mut skipped_no_local_match = 0;
     let mut skipped_by_project = crate::project_map::SkippedByProject::new();
 
-    for remote_session in &remote_sessions {
+    let progress = crate::progress::bar(remote_sessions.len(), "Merging sessions");
+    for remote_session in remote_sessions.iter().progress_with(progress) {
         let remote_relative = remote_session
             .file_path
             .strip_prefix(&remote_projects_dir)

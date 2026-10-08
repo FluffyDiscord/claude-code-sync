@@ -75,6 +75,11 @@ impl ConfigManager {
         Ok(Self::config_dir()?.join("operation-history.json"))
     }
 
+    /// Get the path of the transcript summaries kept between runs
+    pub fn session_summaries_path() -> Result<PathBuf> {
+        Ok(Self::config_dir()?.join("session-summaries.json"))
+    }
+
     /// Get the snapshots directory path
     pub fn snapshots_dir() -> Result<PathBuf> {
         Ok(Self::config_dir()?.join("snapshots"))

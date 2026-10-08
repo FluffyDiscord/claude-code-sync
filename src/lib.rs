@@ -141,6 +141,12 @@ pub mod project_map;
 /// and removes them from the machine and the sync repository together.
 pub mod purge;
 
+/// Progress bars and spinners for long-running steps.
+///
+/// Drawn on stderr, cleared when the step ends, and not drawn at all when
+/// stderr is not a terminal.
+pub mod progress;
+
 /// Conflict report generation and formatting.
 ///
 /// Generates detailed reports of sync conflicts in multiple formats (JSON, Markdown, console).
