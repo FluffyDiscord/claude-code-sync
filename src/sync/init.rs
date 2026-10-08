@@ -3,7 +3,7 @@ use colored::Colorize;
 use std::collections::HashMap;
 use std::path::Path;
 
-use crate::scm;
+use crate::git::{self, GitRepo};
 
 use super::state::{MultiRepoState, RepoConfig};
 
@@ -17,18 +17,18 @@ pub fn init_from_onboarding(
 
     // If this is a cloned repo and it already exists, just open it
     // Otherwise, initialize a new one
-    let scm = if repo_path.exists() && scm::is_repo(repo_path) {
-        scm::open(repo_path)?
+    let repo = if repo_path.exists() && git::is_repo(repo_path) {
+        GitRepo::open(repo_path)?
     } else {
-        scm::init(repo_path)?
+        GitRepo::init(repo_path)?
     };
 
-    crate::scm::attributes::ensure_sync_attributes(repo_path)?;
+    git::attributes::ensure_sync_attributes(repo_path)?;
 
     // Add remote if specified
     let has_remote = if let Some(url) = remote_url {
-        if !scm.has_remote("origin") {
-            scm.add_remote("origin", url)?;
+        if !repo.has_remote("origin") {
+            repo.add_remote("origin", url)?;
         }
         true
     } else {
@@ -70,28 +70,28 @@ pub fn init_sync_repo(repo_path: &Path, remote_url: Option<&str>) -> Result<()> 
     );
 
     // Create/open the repository
-    let scm = if repo_path.exists() && scm::is_repo(repo_path) {
+    let repo = if repo_path.exists() && git::is_repo(repo_path) {
         println!(
             "  {} existing repository at {}",
             "Using".green(),
             repo_path.display()
         );
-        scm::open(repo_path)?
+        GitRepo::open(repo_path)?
     } else {
         println!(
             "  {} new repository at {}",
             "Creating".green(),
             repo_path.display()
         );
-        scm::init(repo_path)?
+        GitRepo::init(repo_path)?
     };
 
-    crate::scm::attributes::ensure_sync_attributes(repo_path)?;
+    git::attributes::ensure_sync_attributes(repo_path)?;
 
     // Add remote if specified
     let has_remote = if let Some(url) = remote_url {
-        if !scm.has_remote("origin") {
-            scm.add_remote("origin", url)?;
+        if !repo.has_remote("origin") {
+            repo.add_remote("origin", url)?;
             println!("  {} remote 'origin' -> {}", "Added".green(), url);
         } else {
             println!("  {} Remote 'origin' already exists", "Note:".yellow());

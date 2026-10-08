@@ -9,7 +9,6 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::filter::FilterConfig;
-use crate::scm::Backend;
 
 use super::denylist::{is_denied, is_unsafe_rel_path};
 use super::memory_index::{is_memory_index, merge_memory_index};
@@ -1309,14 +1308,11 @@ const IGNORE_GLOBS: &[&str] = &[
 const IGNORE_BLOCK_START: &str = "# >>> claude-code-sync managed block — do not edit inside";
 const IGNORE_BLOCK_END: &str = "# <<< claude-code-sync managed block";
 
-/// Build the full managed block for one backend.
-fn ignore_block(backend: Backend) -> String {
+/// Build the full managed block.
+fn ignore_block() -> String {
     let mut block = String::new();
     block.push_str(IGNORE_BLOCK_START);
     block.push('\n');
-    if backend == Backend::Mercurial {
-        block.push_str("syntax: glob\n");
-    }
     for glob in IGNORE_GLOBS {
         block.push_str(glob);
         block.push('\n');
@@ -1327,21 +1323,17 @@ fn ignore_block(backend: Backend) -> String {
 }
 
 /// Write the managed never-sync ignore block into the sync repository's
-/// ignore file for the given backend. Idempotent; preserves user content
-/// outside the block. Returns whether the file changed.
-pub fn ensure_ignore_files(repo_root: &Path, backend: Backend) -> Result<bool> {
-    let file_name = match backend {
-        Backend::Git => ".gitignore",
-        Backend::Mercurial => ".hgignore",
-    };
-    let path = repo_root.join(file_name);
+/// `.gitignore`. Idempotent; preserves user content outside the block.
+/// Returns whether the file changed.
+pub fn ensure_ignore_files(repo_root: &Path) -> Result<bool> {
+    let path = repo_root.join(".gitignore");
     let existing = if path.is_file() {
         fs::read_to_string(&path)?
     } else {
         String::new()
     };
 
-    let block = ignore_block(backend);
+    let block = ignore_block();
 
     let updated = if let (Some(start), Some(end)) = (
         existing.find(IGNORE_BLOCK_START),

@@ -1,4 +1,7 @@
-//! Git SCM backend using CLI commands.
+//! The sync repository, driven through the git CLI.
+
+pub mod attributes;
+pub mod lfs;
 
 use anyhow::{anyhow, Context, Result};
 use std::collections::BTreeMap;
@@ -6,19 +9,42 @@ use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
-use super::{ConflictChoice, ConflictResolver, ConflictedFile, Scm};
+/// A file both sides of a merge changed in ways the merge cannot combine.
+/// A side that deleted the file has `None`.
+#[derive(Debug, Default)]
+pub struct ConflictedFile {
+    pub path: String,
+    pub base: Option<Vec<u8>>,
+    pub local: Option<Vec<u8>>,
+    pub remote: Option<Vec<u8>>,
+}
 
-/// Git SCM implementation using the git CLI.
-pub struct GitScm {
+#[derive(Debug, PartialEq, Eq)]
+pub enum ConflictChoice {
+    KeepLocal,
+    TakeRemote,
+    WriteMerged(Vec<u8>),
+    AbortMerge,
+}
+
+pub type ConflictResolver<'a> = &'a dyn Fn(&ConflictedFile) -> Result<ConflictChoice>;
+
+/// Check if a directory is a git repository.
+pub fn is_repo(path: &Path) -> bool {
+    path.join(".git").exists()
+}
+
+/// A git repository, driven through the git CLI.
+pub struct GitRepo {
     workdir: PathBuf,
 }
 
-impl GitScm {
+impl GitRepo {
     /// Open an existing Git repository.
     pub fn open(path: &Path) -> Result<Self> {
         let path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
 
-        if !path.join(".git").exists() {
+        if !is_repo(&path) {
             return Err(anyhow!(
                 "Not a git repository: '{}' (no .git directory)",
                 path.display()
@@ -269,18 +295,19 @@ impl GitScm {
             .map(|o| o.status.success())
             .unwrap_or(false)
     }
-}
 
-impl Scm for GitScm {
-    fn current_branch(&self) -> Result<String> {
+    /// Get the current branch name.
+    pub fn current_branch(&self) -> Result<String> {
         self.run_git(&["branch", "--show-current"])
     }
 
-    fn current_commit_hash(&self) -> Result<String> {
+    /// Get the current commit hash.
+    pub fn current_commit_hash(&self) -> Result<String> {
         self.run_git(&["rev-parse", "HEAD"])
     }
 
-    fn stage_all(&self) -> Result<()> {
+    /// Stage all changes (add and remove).
+    pub fn stage_all(&self) -> Result<()> {
         let merge_is_unfinished = self.has_unfinished_merge();
         if merge_is_unfinished {
             return Err(anyhow!(
@@ -291,40 +318,49 @@ impl Scm for GitScm {
         self.run_git_ok(&["-c", "core.safecrlf=false", "add", "-A"])
     }
 
-    fn stage_renormalized(&self) -> Result<()> {
+    /// Restage every tracked file under the current line-ending rules.
+    pub fn stage_renormalized(&self) -> Result<()> {
         self.run_git_ok(&["-c", "core.safecrlf=false", "add", "--renormalize", "."])
     }
 
-    fn commit(&self, message: &str) -> Result<()> {
+    /// Commit staged changes with a message.
+    pub fn commit(&self, message: &str) -> Result<()> {
         self.run_git_ok(&["commit", "-m", message])
     }
 
-    fn has_changes(&self) -> Result<bool> {
+    /// Check if there are uncommitted changes.
+    pub fn has_changes(&self) -> Result<bool> {
         let output = self.run_git(&["status", "--porcelain"])?;
         Ok(!output.is_empty())
     }
 
-    fn add_remote(&self, name: &str, url: &str) -> Result<()> {
+    /// Add a remote repository.
+    pub fn add_remote(&self, name: &str, url: &str) -> Result<()> {
         self.run_git_ok(&["remote", "add", name, url])
     }
 
-    fn has_remote(&self, name: &str) -> bool {
+    /// Check if a remote exists.
+    pub fn has_remote(&self, name: &str) -> bool {
         self.git_succeeds(&["remote", "get-url", name])
     }
 
-    fn get_remote_url(&self, name: &str) -> Result<String> {
+    /// Get the URL for a remote.
+    pub fn get_remote_url(&self, name: &str) -> Result<String> {
         self.run_git(&["remote", "get-url", name])
     }
 
-    fn set_remote_url(&self, name: &str, url: &str) -> Result<()> {
+    /// Set or update the URL for a remote.
+    pub fn set_remote_url(&self, name: &str, url: &str) -> Result<()> {
         self.run_git_ok(&["remote", "set-url", name, url])
     }
 
-    fn remove_remote(&self, name: &str) -> Result<()> {
+    /// Remove a remote.
+    pub fn remove_remote(&self, name: &str) -> Result<()> {
         self.run_git_ok(&["remote", "remove", name])
     }
 
-    fn list_remotes(&self) -> Result<Vec<String>> {
+    /// List all remote names.
+    pub fn list_remotes(&self) -> Result<Vec<String>> {
         let output = self.run_git(&["remote"])?;
         if output.is_empty() {
             Ok(Vec::new())
@@ -333,7 +369,8 @@ impl Scm for GitScm {
         }
     }
 
-    fn push(&self, remote: &str, branch: &str) -> Result<()> {
+    /// Push to a remote repository.
+    pub fn push(&self, remote: &str, branch: &str) -> Result<()> {
         self.run_git_with_progress(&["push", remote, branch])
             .with_context(|| {
                 format!(
@@ -349,14 +386,20 @@ impl Scm for GitScm {
             })
     }
 
-    /// Fetch and merge the remote branch.
+    /// Fetch and merge the remote branch. A file both sides changed in ways
+    /// the merge cannot combine goes to `resolve_conflict`.
     ///
     /// The merge is spelled out rather than left to `git pull`, which since
     /// git 2.34 refuses to reconcile diverged branches until the machine's
     /// own `pull.rebase` / `pull.ff` is configured — a setting this tool does
     /// not own. Merge, not rebase: undo records point at local commit hashes,
     /// and a rebase rewrites them.
-    fn pull(&self, remote: &str, branch: &str, resolve_conflict: ConflictResolver) -> Result<()> {
+    pub fn pull(
+        &self,
+        remote: &str,
+        branch: &str,
+        resolve_conflict: ConflictResolver,
+    ) -> Result<()> {
         let interrupted_merge_left = self.has_unfinished_merge();
         if interrupted_merge_left {
             self.run_git_ok(&["merge", "--abort"])
@@ -440,11 +483,13 @@ impl Scm for GitScm {
         ))
     }
 
-    fn has_unfinished_merge(&self) -> bool {
+    /// Whether an interrupted pull left a merge unfinished.
+    pub fn has_unfinished_merge(&self) -> bool {
         self.git_succeeds(&["rev-parse", "--verify", "--quiet", "MERGE_HEAD"])
     }
 
-    fn reset_soft(&self, commit: &str) -> Result<()> {
+    /// Reset to a specific commit, keeping the working directory.
+    pub fn reset_soft(&self, commit: &str) -> Result<()> {
         self.run_git_ok(&["reset", "--soft", commit])
     }
 }
@@ -455,35 +500,50 @@ mod tests {
     use tempfile::TempDir;
 
     #[test]
+    fn test_is_repo() {
+        let temp = TempDir::new().unwrap();
+        assert!(!is_repo(temp.path()));
+
+        std::fs::create_dir(temp.path().join(".git")).unwrap();
+        assert!(is_repo(temp.path()));
+    }
+
+    #[test]
+    fn test_open_non_repo_fails() {
+        let temp = TempDir::new().unwrap();
+        assert!(GitRepo::open(temp.path()).is_err());
+    }
+
+    #[test]
     fn test_git_init_and_open() {
         let temp = TempDir::new().unwrap();
-        let _scm = GitScm::init(temp.path()).unwrap();
+        let _repo = GitRepo::init(temp.path()).unwrap();
 
         assert!(temp.path().join(".git").exists());
 
         // Verify we can open the initialized repo
-        let _reopened = GitScm::open(temp.path()).unwrap();
+        let _reopened = GitRepo::open(temp.path()).unwrap();
     }
 
     #[test]
     fn test_git_stage_commit() {
         let temp = TempDir::new().unwrap();
-        let scm = GitScm::init(temp.path()).unwrap();
+        let repo = GitRepo::init(temp.path()).unwrap();
 
         // Initially no changes
-        assert!(!scm.has_changes().unwrap());
+        assert!(!repo.has_changes().unwrap());
 
         // Create a file
         std::fs::write(temp.path().join("test.txt"), "hello").unwrap();
-        assert!(scm.has_changes().unwrap());
+        assert!(repo.has_changes().unwrap());
 
         // Stage and commit
-        scm.stage_all().unwrap();
-        scm.commit("Initial commit").unwrap();
-        assert!(!scm.has_changes().unwrap());
+        repo.stage_all().unwrap();
+        repo.commit("Initial commit").unwrap();
+        assert!(!repo.has_changes().unwrap());
 
         // Verify commit hash
-        let hash = scm.current_commit_hash().unwrap();
+        let hash = repo.current_commit_hash().unwrap();
         assert!(!hash.is_empty());
         assert_eq!(hash.len(), 40); // Full SHA
     }
@@ -491,15 +551,15 @@ mod tests {
     #[test]
     fn test_git_branch() {
         let temp = TempDir::new().unwrap();
-        let scm = GitScm::init(temp.path()).unwrap();
+        let repo = GitRepo::init(temp.path()).unwrap();
 
         // Create initial commit (needed for branch to exist)
         std::fs::write(temp.path().join("test.txt"), "hello").unwrap();
-        scm.stage_all().unwrap();
-        scm.commit("Initial commit").unwrap();
+        repo.stage_all().unwrap();
+        repo.commit("Initial commit").unwrap();
 
         // Check branch (default is master or main depending on git config)
-        let branch = scm.current_branch().unwrap();
+        let branch = repo.current_branch().unwrap();
         assert!(!branch.is_empty());
     }
 
@@ -517,7 +577,7 @@ mod tests {
         );
     }
 
-    fn commit_file(machine: &GitScm, dir: &Path, name: &str, contents: &str) {
+    fn commit_file(machine: &GitRepo, dir: &Path, name: &str, contents: &str) {
         std::fs::write(dir.join(name), contents).unwrap();
         machine.stage_all().unwrap();
         machine.commit(&format!("add {name}")).unwrap();
@@ -534,24 +594,24 @@ mod tests {
     /// Two clones of one bare remote, both already one commit ahead of it in
     /// their own way: the shape a sync repository takes when two machines
     /// pushed between pulls.
-    fn two_diverged_machines(shared_file: Option<&str>) -> (TempDir, GitScm, PathBuf, String) {
+    fn two_diverged_machines(shared_file: Option<&str>) -> (TempDir, GitRepo, PathBuf, String) {
         let root = TempDir::new().unwrap();
         git_in(root.path(), &["init", "--bare", "--quiet", "origin"]);
 
         let first = root.path().join("first");
         git_in(root.path(), &["clone", "--quiet", "origin", "first"]);
-        let machine_first = GitScm::open(&first).unwrap();
+        let machine_first = GitRepo::open(&first).unwrap();
         git_in(&first, &["config", "user.name", "First"]);
         git_in(&first, &["config", "user.email", "first@local"]);
         use_git_for_windows_line_endings(&first);
-        crate::scm::attributes::ensure_sync_attributes(&first).unwrap();
+        crate::git::attributes::ensure_sync_attributes(&first).unwrap();
         commit_file(&machine_first, &first, "shared-start.txt", "start\n");
         let branch = machine_first.current_branch().unwrap();
         machine_first.push("origin", &branch).unwrap();
 
         let second = root.path().join("second");
         git_in(root.path(), &["clone", "--quiet", "origin", "second"]);
-        let machine_second = GitScm::open(&second).unwrap();
+        let machine_second = GitRepo::open(&second).unwrap();
         git_in(&second, &["config", "user.name", "Second"]);
         git_in(&second, &["config", "user.email", "second@local"]);
         use_git_for_windows_line_endings(&second);
@@ -652,7 +712,7 @@ mod tests {
     fn a_file_deleted_on_one_machine_and_changed_on_the_other_can_be_deleted() {
         let (root, machine, workdir, branch) = two_diverged_machines(None);
         let second = root.path().join("second");
-        let machine_second = GitScm::open(&second).unwrap();
+        let machine_second = GitRepo::open(&second).unwrap();
         git_in(&second, &["rm", "--quiet", "shared-start.txt"]);
         machine_second.commit("remove shared-start.txt").unwrap();
         machine_second.push("origin", &branch).unwrap();
@@ -729,7 +789,7 @@ mod tests {
         // What `init --remote <url>` leaves behind: a repository with a remote
         // and not a single commit of its own.
         let fresh = root.path().join("fresh");
-        let machine = GitScm::init(&fresh).unwrap();
+        let machine = GitRepo::init(&fresh).unwrap();
         use_git_for_windows_line_endings(&fresh);
         machine
             .add_remote("origin", root.path().join("origin").to_str().unwrap())
@@ -750,8 +810,8 @@ mod tests {
 
         // `init` writes the sync rules and commits nothing.
         let fresh = root.path().join("fresh");
-        let machine = GitScm::init(&fresh).unwrap();
-        crate::scm::attributes::ensure_sync_attributes(&fresh).unwrap();
+        let machine = GitRepo::init(&fresh).unwrap();
+        crate::git::attributes::ensure_sync_attributes(&fresh).unwrap();
         machine
             .add_remote("origin", root.path().join("origin").to_str().unwrap())
             .unwrap();
@@ -767,8 +827,8 @@ mod tests {
         let root = TempDir::new().unwrap();
         git_in(root.path(), &["init", "--bare", "--quiet", "origin"]);
         let fresh = root.path().join("fresh");
-        let machine = GitScm::init(&fresh).unwrap();
-        crate::scm::attributes::ensure_sync_attributes(&fresh).unwrap();
+        let machine = GitRepo::init(&fresh).unwrap();
+        crate::git::attributes::ensure_sync_attributes(&fresh).unwrap();
         machine
             .add_remote("origin", root.path().join("origin").to_str().unwrap())
             .unwrap();
@@ -785,7 +845,7 @@ mod tests {
     fn a_pull_from_an_unreachable_remote_is_an_error() {
         let root = TempDir::new().unwrap();
         let fresh = root.path().join("fresh");
-        let machine = GitScm::init(&fresh).unwrap();
+        let machine = GitRepo::init(&fresh).unwrap();
         machine
             .add_remote("origin", root.path().join("missing").to_str().unwrap())
             .unwrap();
@@ -797,7 +857,7 @@ mod tests {
     fn a_push_to_an_unreachable_remote_is_an_error() {
         let root = TempDir::new().unwrap();
         let fresh = root.path().join("fresh");
-        let machine = GitScm::init(&fresh).unwrap();
+        let machine = GitRepo::init(&fresh).unwrap();
         commit_file(&machine, &fresh, "a.txt", "a\n");
         machine
             .add_remote("origin", root.path().join("missing").to_str().unwrap())
@@ -818,7 +878,7 @@ mod tests {
             &["init", "--quiet", "--bare", remote.to_str().unwrap()],
         );
         let fresh = root.path().join("fresh");
-        let machine = GitScm::init(&fresh).unwrap();
+        let machine = GitRepo::init(&fresh).unwrap();
         commit_file(&machine, &fresh, "a.txt", "a\n");
         machine
             .add_remote("origin", remote.to_str().unwrap())
@@ -864,13 +924,13 @@ mod tests {
     #[test]
     fn test_git_remote() {
         let temp = TempDir::new().unwrap();
-        let scm = GitScm::init(temp.path()).unwrap();
+        let repo = GitRepo::init(temp.path()).unwrap();
 
-        assert!(!scm.has_remote("origin"));
+        assert!(!repo.has_remote("origin"));
 
-        scm.add_remote("origin", "https://github.com/test/repo.git")
+        repo.add_remote("origin", "https://github.com/test/repo.git")
             .unwrap();
-        assert!(scm.has_remote("origin"));
-        assert!(!scm.has_remote("upstream"));
+        assert!(repo.has_remote("origin"));
+        assert!(!repo.has_remote("upstream"));
     }
 }

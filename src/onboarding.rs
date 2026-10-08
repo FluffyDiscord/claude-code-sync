@@ -35,9 +35,6 @@ use crate::config::ConfigManager;
 /// # Optional: Enable Git LFS for large files (default: false)
 /// enable_lfs = true
 ///
-/// # Optional: SCM backend - "git" or "mercurial" (default: "git")
-/// scm_backend = "git"
-///
 /// # Optional: Subdirectory for storing projects (default: "projects")
 /// sync_subdirectory = "claude-history"
 ///
@@ -75,10 +72,6 @@ pub struct InitConfig {
     #[serde(default)]
     pub enable_lfs: bool,
 
-    /// SCM backend: "git" or "mercurial" (default: "git").
-    #[serde(default = "default_scm_backend")]
-    pub scm_backend: String,
-
     /// Subdirectory within sync repo for storing projects (default: "projects").
     #[serde(default = "default_sync_subdirectory")]
     pub sync_subdirectory: String,
@@ -92,10 +85,6 @@ pub struct InitConfig {
     /// Missing table means every category stays off.
     #[serde(default)]
     pub sync_artifacts: crate::artifacts::registry::ArtifactToggles,
-}
-
-fn default_scm_backend() -> String {
-    "git".to_string()
 }
 
 fn default_sync_subdirectory() -> String {
@@ -173,22 +162,6 @@ impl InitConfig {
         if self.clone && self.remote_url.is_none() {
             return Err(anyhow::anyhow!(
                 "clone = true requires remote_url to be set"
-            ));
-        }
-
-        // Validate SCM backend
-        let backend = self.scm_backend.to_lowercase();
-        if backend != "git" && backend != "mercurial" && backend != "hg" {
-            return Err(anyhow::anyhow!(
-                "Invalid scm_backend '{}'. Use 'git' or 'mercurial'.",
-                self.scm_backend
-            ));
-        }
-
-        // LFS only works with git
-        if self.enable_lfs && backend != "git" {
-            return Err(anyhow::anyhow!(
-                "enable_lfs = true requires scm_backend = 'git'"
             ));
         }
 
@@ -544,7 +517,6 @@ mod tests {
         assert!(!config.clone);
         assert!(!config.exclude_attachments);
         assert!(!config.enable_lfs);
-        assert_eq!(config.scm_backend, "git");
         assert_eq!(config.sync_subdirectory, "projects");
     }
 
@@ -557,7 +529,6 @@ mod tests {
             exclude_attachments = true
             exclude_older_than_days = 30
             enable_lfs = true
-            scm_backend = "git"
             sync_subdirectory = "history"
         "#;
         let config: InitConfig = toml::from_str(toml).unwrap();
@@ -570,7 +541,6 @@ mod tests {
         assert!(config.exclude_attachments);
         assert_eq!(config.exclude_older_than_days, Some(30));
         assert!(config.enable_lfs);
-        assert_eq!(config.scm_backend, "git");
         assert_eq!(config.sync_subdirectory, "history");
     }
 
@@ -583,41 +553,6 @@ mod tests {
             exclude_attachments: false,
             exclude_older_than_days: None,
             enable_lfs: false,
-            scm_backend: "git".to_string(),
-            sync_subdirectory: "projects".to_string(),
-            use_project_name_only: false,
-            sync_artifacts: Default::default(),
-        };
-        assert!(config.validate().is_err());
-    }
-
-    #[test]
-    fn test_init_config_validate_lfs_requires_git() {
-        let config = InitConfig {
-            repo_path: "/tmp/test".to_string(),
-            remote_url: None,
-            clone: false,
-            exclude_attachments: false,
-            exclude_older_than_days: None,
-            enable_lfs: true,
-            scm_backend: "mercurial".to_string(),
-            sync_subdirectory: "projects".to_string(),
-            use_project_name_only: false,
-            sync_artifacts: Default::default(),
-        };
-        assert!(config.validate().is_err());
-    }
-
-    #[test]
-    fn test_init_config_validate_invalid_backend() {
-        let config = InitConfig {
-            repo_path: "/tmp/test".to_string(),
-            remote_url: None,
-            clone: false,
-            exclude_attachments: false,
-            exclude_older_than_days: None,
-            enable_lfs: false,
-            scm_backend: "svn".to_string(),
             sync_subdirectory: "projects".to_string(),
             use_project_name_only: false,
             sync_artifacts: Default::default(),
@@ -634,7 +569,6 @@ mod tests {
             exclude_attachments: true,
             exclude_older_than_days: Some(30),
             enable_lfs: true,
-            scm_backend: "git".to_string(),
             sync_subdirectory: "projects".to_string(),
             use_project_name_only: false,
             sync_artifacts: Default::default(),

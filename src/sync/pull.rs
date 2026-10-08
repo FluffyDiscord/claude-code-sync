@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 
 use crate::conflict::ConflictDetector;
 use crate::filter::FilterConfig;
+use crate::git::{ConflictChoice, ConflictedFile, GitRepo};
 use crate::history::{
     ConversationSummary, OperationHistory, OperationRecord, OperationType, SyncOperation,
 };
@@ -14,7 +15,6 @@ use crate::interactive_conflict;
 use crate::later_timestamps::keep_later_timestamps;
 use crate::parser::ConversationSession;
 use crate::report::{save_conflict_report, ConflictReport};
-use crate::scm;
 use crate::undo::Snapshot;
 
 use super::discovery::{claude_home_dir, claude_projects_dir, discover_sessions, warn_large_files};
@@ -47,21 +47,21 @@ fn local_destination(
 }
 
 fn settle_conflict(
-    file: &scm::ConflictedFile,
+    file: &ConflictedFile,
     can_ask: bool,
     filter: &FilterConfig,
-) -> Result<scm::ConflictChoice> {
+) -> Result<ConflictChoice> {
     let later_dates_merged = match (&file.local, &file.remote) {
         (Some(local), Some(remote)) => keep_later_timestamps(local, remote),
         _ => None,
     };
     if let Some(merged) = later_dates_merged {
         println!("  {} {}: kept the later dates", "✓".green(), file.path);
-        return Ok(scm::ConflictChoice::WriteMerged(merged));
+        return Ok(ConflictChoice::WriteMerged(merged));
     }
 
     if !can_ask {
-        return Ok(scm::ConflictChoice::AbortMerge);
+        return Ok(ConflictChoice::AbortMerge);
     }
     crate::merge_tool::resolve_conflict(&filter.merge_tool, filter.prefer_merge_tool, file)
 }
@@ -80,7 +80,7 @@ pub fn pull_history(
     }
 
     let state = SyncState::load()?;
-    let repo = scm::open(&state.sync_repo_path)?;
+    let repo = GitRepo::open(&state.sync_repo_path)?;
     let filter = FilterConfig::load()?;
     let claude_dir = claude_projects_dir()?;
 
@@ -90,7 +90,7 @@ pub fn pull_history(
         .or_else(|| repo.current_branch().ok())
         .unwrap_or_else(|| "main".to_string());
 
-    super::commit_sync_attributes(repo.as_ref(), &state.sync_repo_path)?;
+    super::commit_sync_attributes(&repo, &state.sync_repo_path)?;
 
     // Fetch from remote if configured
     if fetch_remote && state.has_remote {
@@ -99,7 +99,7 @@ pub fn pull_history(
         // Merging a stale sync repository into ~/.claude looks like a
         // successful pull and silently loses whatever the remote holds, so a
         // remote that cannot be reached or reconciled stops the pull instead.
-        let resolve_conflict = |file: &scm::ConflictedFile| {
+        let resolve_conflict = |file: &ConflictedFile| {
             let can_ask = interactive_conflict::is_interactive();
             settle_conflict(file, can_ask, &filter)
         };
@@ -114,7 +114,7 @@ pub fn pull_history(
 
         // A first pull into a repository with no commits of its own sets the
         // uncommitted rules aside; restore and commit them now.
-        super::commit_sync_attributes(repo.as_ref(), &state.sync_repo_path)?;
+        super::commit_sync_attributes(&repo, &state.sync_repo_path)?;
     }
 
     // Discover local sessions
@@ -729,8 +729,8 @@ pub fn pull_history(
 mod tests {
     use super::*;
 
-    fn conflicted(local: Option<&str>, remote: Option<&str>) -> scm::ConflictedFile {
-        scm::ConflictedFile {
+    fn conflicted(local: Option<&str>, remote: Option<&str>) -> ConflictedFile {
+        ConflictedFile {
             path: "artifacts/plugins/known_marketplaces.json".to_string(),
             base: None,
             local: local.map(|text| text.as_bytes().to_vec()),
@@ -748,7 +748,7 @@ mod tests {
                     Some("\"lastUpdated\": \"2026-10-01T06:00:01.741Z\""),
                     Some("\"lastUpdated\": \"2026-10-01T06:50:50.567Z\""),
                 ),
-                scm::ConflictChoice::WriteMerged(
+                ConflictChoice::WriteMerged(
                     b"\"lastUpdated\": \"2026-10-01T06:50:50.567Z\"".to_vec(),
                 ),
             ),
@@ -758,12 +758,12 @@ mod tests {
                     Some("a 2026-10-01T06:00:01Z"),
                     Some("b 2026-10-01T06:00:02Z"),
                 ),
-                scm::ConflictChoice::AbortMerge,
+                ConflictChoice::AbortMerge,
             ),
             (
                 "deleted on one side",
                 conflicted(Some("a"), None),
-                scm::ConflictChoice::AbortMerge,
+                ConflictChoice::AbortMerge,
             ),
         ];
 

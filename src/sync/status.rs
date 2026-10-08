@@ -3,7 +3,7 @@ use colored::Colorize;
 use std::path::Path;
 
 use crate::filter::FilterConfig;
-use crate::scm;
+use crate::git::GitRepo;
 
 use super::discovery::{claude_projects_dir, discover_sessions};
 use super::state::SyncState;
@@ -11,7 +11,7 @@ use super::state::SyncState;
 /// Show sync status
 pub fn show_status(show_conflicts: bool, show_files: bool) -> Result<()> {
     let state = SyncState::load()?;
-    let repo = scm::open(&state.sync_repo_path)?;
+    let repo = GitRepo::open(&state.sync_repo_path)?;
     let filter = FilterConfig::load()?;
     let claude_dir = claude_projects_dir()?;
 
@@ -21,10 +21,6 @@ pub fn show_status(show_conflicts: bool, show_files: bool) -> Result<()> {
     // Repository info
     println!("{}", "Repository:".bold());
     println!("  Path: {}", state.sync_repo_path.display());
-    let backend = scm::detect_backend(&state.sync_repo_path)
-        .map(|b| format!("{:?}", b))
-        .unwrap_or_else(|| "Unknown".to_string());
-    println!("  Backend: {}", backend);
     println!(
         "  Remote: {}",
         if state.has_remote {

@@ -13,6 +13,8 @@ use rayon::prelude::*;
 use serde_json::Value;
 use std::path::{Path, PathBuf};
 
+use crate::git::GitRepo;
+
 /// Shortest retention window applied by default: six months.
 pub const MINIMUM_RETENTION_DAYS: u32 = 180;
 
@@ -242,8 +244,8 @@ pub fn apply(plan: &PurgePlan) -> Result<PurgeReport> {
 
 /// Open the sync repository, before anything is deleted: a repository that
 /// cannot record the removal must stop the purge while the files still exist.
-pub fn open_sync_repo(repo_root: &Path) -> Result<Box<dyn crate::scm::Scm>> {
-    let repo = crate::scm::open(repo_root)
+pub fn open_sync_repo(repo_root: &Path) -> Result<GitRepo> {
+    let repo = GitRepo::open(repo_root)
         .with_context(|| format!("Failed to open repository at {}", repo_root.display()))?;
     repo.has_changes()
         .with_context(|| format!("Cannot read the repository at {}", repo_root.display()))?;
@@ -255,7 +257,7 @@ pub fn open_sync_repo(repo_root: &Path) -> Result<Box<dyn crate::scm::Scm>> {
 /// A repo-side transcript that is not committed yet — a push that was declined,
 /// a path an ignore rule covers — would be deleted with no copy in history,
 /// which is the one thing a purge promises not to do.
-pub fn ensure_nothing_uncommitted(repo: &dyn crate::scm::Scm) -> Result<()> {
+pub fn ensure_nothing_uncommitted(repo: &GitRepo) -> Result<()> {
     if repo.has_changes()? {
         bail!(
             "the sync repository has uncommitted changes; run `claude-code-sync push` \
@@ -266,7 +268,7 @@ pub fn ensure_nothing_uncommitted(repo: &dyn crate::scm::Scm) -> Result<()> {
 }
 
 /// Stage and commit the removals. Returns whether a commit was made.
-pub fn commit_removals(repo: &dyn crate::scm::Scm, plan: &PurgePlan) -> Result<bool> {
+pub fn commit_removals(repo: &GitRepo, plan: &PurgePlan) -> Result<bool> {
     repo.stage_all()?;
     if !repo.has_changes()? {
         return Ok(false);

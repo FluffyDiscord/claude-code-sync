@@ -4,7 +4,7 @@
 mod common;
 
 use anyhow::Result;
-use claude_code_sync::scm;
+use claude_code_sync::git::GitRepo;
 use claude_code_sync::sync::{self, MultiRepoState, RepoConfig, SyncState};
 use common::ConfigEnv;
 use serial_test::serial;
@@ -250,7 +250,7 @@ fn test_operations_use_active_repo() -> Result<()> {
     sync::init_sync_repo(&repo1_path, None)?;
 
     // Add a second repo by hand.
-    scm::init(&repo2_path)?;
+    GitRepo::init(&repo2_path)?;
     let mut multi_state = MultiRepoState::load()?;
     multi_state.repos.insert(
         "repo2".to_string(),
@@ -357,7 +357,7 @@ fn test_cloned_repo_flag_in_v2() -> Result<()> {
     let repo_path = env.join("cloned-repo");
 
     // Pre-create the repo, as a clone would have.
-    scm::init(&repo_path)?;
+    GitRepo::init(&repo_path)?;
     sync::init_from_onboarding(&repo_path, Some("https://github.com/test/repo.git"), true)?;
 
     let multi_state = MultiRepoState::load()?;

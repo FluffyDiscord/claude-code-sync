@@ -1,16 +1,16 @@
 use anyhow::{anyhow, Context, Result};
 use colored::Colorize;
 
-use crate::scm;
+use crate::git::GitRepo;
 
 use super::state::SyncState;
 
 /// Show current remote configuration
 pub fn show_remote() -> Result<()> {
     let state = SyncState::load()?;
-    let repo = scm::open(&state.sync_repo_path)?;
+    let repo = GitRepo::open(&state.sync_repo_path)?;
 
-    println!("{}", "=== SCM Remote Configuration ===".bold().cyan());
+    println!("{}", "=== Git Remote Configuration ===".bold().cyan());
     println!();
 
     // Show sync repository directory
@@ -19,9 +19,6 @@ pub fn show_remote() -> Result<()> {
         "Sync Directory:".bold(),
         state.sync_repo_path.display().to_string().cyan()
     );
-
-    // Show backend type
-    println!("{} Git", "Backend:".bold());
 
     // Show current branch
     if let Ok(branch) = repo.current_branch() {
@@ -60,7 +57,7 @@ pub fn show_remote() -> Result<()> {
 /// Set or update remote URL
 pub fn set_remote(name: &str, url: &str) -> Result<()> {
     let state = SyncState::load()?;
-    let repo = scm::open(&state.sync_repo_path)?;
+    let repo = GitRepo::open(&state.sync_repo_path)?;
 
     // Validate URL format
     if !url.starts_with("http://")
@@ -121,7 +118,7 @@ pub fn set_remote(name: &str, url: &str) -> Result<()> {
 /// Remove a remote
 pub fn remove_remote(name: &str) -> Result<()> {
     let state = SyncState::load()?;
-    let repo = scm::open(&state.sync_repo_path)?;
+    let repo = GitRepo::open(&state.sync_repo_path)?;
 
     // Check if remote exists
     if !repo.has_remote(name) {

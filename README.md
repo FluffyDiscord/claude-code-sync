@@ -33,7 +33,6 @@ cargo doc --open --no-deps --all-features
 | **Smart Conflict Resolution** | Interactive TUI for resolving conflicts with preview |
 | **Selective Sync** | Filter by project, date, or exclude attachments |
 | **Git LFS Support** | Efficiently store large conversation files with Git LFS |
-| **Mercurial Support** | Use Mercurial (hg) as an alternative to Git |
 | **Undo Operations** | Rollback pull/push with automatic snapshots |
 | **Operation History** | Track and review past sync operations |
 | **Branch Management** | Sync to different branches, manage remotes |
@@ -125,7 +124,7 @@ be overridden by any configuration: `.credentials.json`,
 `session-env/`, `file-history/`, `paste-cache/`, `cache/`, `debug/`,
 `statsig/`, `backups/`, `sessions/`). Pull refuses these paths even if they
 appear inside the sync repository, and every push maintains a managed guard
-block in the repo's `.gitignore` (or `.hgignore`) as defense in depth.
+block in the repo's `.gitignore` as defense in depth.
 
 ### Sync repository layout
 
@@ -476,7 +475,6 @@ remote_url = "https://github.com/user/repo.git"
 clone = true
 exclude_attachments = true
 enable_lfs = true
-scm_backend = "git"
 sync_subdirectory = "projects"
 ```
 
@@ -576,7 +574,6 @@ claude-code-sync config [OPTIONS] [--show]
 - `--exclude-attachments <true|false>`: Exclude file attachments (images, PDFs, etc.)
 - `--enable-lfs <true|false>`: Enable Git LFS for large files
 - `--lfs-patterns <PATTERNS>`: File patterns to track with LFS (comma-separated, default: `*.jsonl`)
-- `--scm-backend <BACKEND>`: SCM backend to use: `git` or `mercurial` (default: `git`)
 - `--sync-subdirectory <DIR>`: Subdirectory within sync repo for projects (default: `projects`)
 - `--enable-artifacts <NAMES>`: Enable artifact categories (comma-separated, or `all`)
 - `--disable-artifacts <NAMES>`: Disable artifact categories (comma-separated, or `all`)
@@ -598,9 +595,6 @@ claude-code-sync config --exclude-attachments true
 
 # Enable Git LFS for large files
 claude-code-sync config --enable-lfs true --lfs-patterns "*.jsonl,*.png"
-
-# Use Mercurial instead of Git
-claude-code-sync config --scm-backend mercurial
 
 # Store projects in a custom subdirectory
 claude-code-sync config --sync-subdirectory "claude-history"
@@ -935,9 +929,6 @@ enable_lfs = false
 # File patterns to track with LFS
 lfs_patterns = ["*.jsonl"]
 
-# SCM backend: "git" or "mercurial"
-scm_backend = "git"
-
 # Subdirectory within sync repo for projects
 sync_subdirectory = "projects"
 
@@ -1030,10 +1021,8 @@ Add to your crontab:
 ### Module Overview
 
 - **parser.rs**: JSONL conversation file parser
-- **scm/**: SCM abstraction layer supporting multiple backends
-  - **mod.rs**: `Scm` trait and factory functions
-  - **git.rs**: Git backend via CLI commands
-  - **hg.rs**: Mercurial backend via CLI commands
+- **git/**: Git access via CLI commands
+  - **attributes.rs**: Managed `.gitattributes` rules
   - **lfs.rs**: Git LFS support
 - **sync/**: Core sync engine with push/pull logic and snapshot integration
 - **conflict.rs**: Conflict detection and resolution
@@ -1074,9 +1063,8 @@ Each line is a separate JSON object representing a conversation event.
 - `log`: Logging facade
 - `env_logger`: Console logging implementation
 - `atty`: Terminal detection for interactive mode
-- `rstest`: Parameterized testing (dev dependency)
 
-**Note:** Git/Mercurial operations are performed via CLI commands, not library bindings. This ensures compatibility with git hooks, LFS, and credential helpers.
+**Note:** Git operations are performed via CLI commands, not library bindings. This ensures compatibility with git hooks, LFS, and credential helpers.
 
 ## Security Considerations
 

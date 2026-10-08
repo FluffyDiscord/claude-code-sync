@@ -7,11 +7,11 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::filter::FilterConfig;
+use crate::git::{self, GitRepo};
 use crate::history::{
     ConversationSummary, OperationHistory, OperationRecord, OperationType, SyncOperation,
 };
 use crate::interactive_conflict;
-use crate::scm;
 
 use super::discovery::{
     claude_home_dir, claude_projects_dir, discover_sessions, find_colliding_projects,
@@ -169,7 +169,7 @@ pub fn push_history(
     }
 
     let state = SyncState::load()?;
-    let repo = scm::open(&state.sync_repo_path)?;
+    let repo = GitRepo::open(&state.sync_repo_path)?;
     let merge_is_unfinished = repo.has_unfinished_merge();
     if merge_is_unfinished {
         anyhow::bail!(
@@ -189,11 +189,11 @@ pub fn push_history(
         if verbosity != VerbosityLevel::Quiet {
             println!("  {} Git LFS...", "Configuring".cyan());
         }
-        scm::lfs::setup(&state.sync_repo_path, &filter.lfs_patterns)
+        git::lfs::setup(&state.sync_repo_path, &filter.lfs_patterns)
             .context("Failed to set up Git LFS")?;
     }
 
-    crate::scm::attributes::ensure_sync_attributes(&state.sync_repo_path)?;
+    git::attributes::ensure_sync_attributes(&state.sync_repo_path)?;
 
     let claude_dir = claude_projects_dir()?;
 
@@ -294,7 +294,7 @@ pub fn push_history(
         &state.sync_repo_path,
         &filter,
     )?;
-    crate::artifacts::engine::ensure_ignore_files(&state.sync_repo_path, filter.backend()?)?;
+    crate::artifacts::engine::ensure_ignore_files(&state.sync_repo_path)?;
 
     // ============================================================================
     // SHOW SUMMARY AND INTERACTIVE CONFIRMATION

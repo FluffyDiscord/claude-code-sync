@@ -480,37 +480,6 @@ sudo apt-get install git-lfs
 git lfs install
 ```
 
-## Using Mercurial Instead of Git
-
-If you prefer Mercurial (hg) over Git:
-
-### Setup with Mercurial
-
-```bash
-# Configure to use Mercurial backend
-claude-code-sync config --scm-backend mercurial
-
-# Initialize repository
-claude-code-sync init --repo ~/claude-backup-hg
-
-# Push your history
-claude-code-sync push
-```
-
-### Mercurial with Remote
-
-```bash
-# Initialize with Mercurial and remote
-claude-code-sync init \
-  --repo ~/claude-backup-hg \
-  --remote https://bitbucket.org/user/claude-history
-
-# Sync
-claude-code-sync sync
-```
-
-**Note:** LFS is only supported with Git. If you need LFS, use the Git backend.
-
 ## Non-Interactive Initialization (CI/CD)
 
 For automated setups, use a config file:
@@ -525,7 +494,6 @@ remote_url = "git@github.com:user/claude-history.git"
 clone = true
 exclude_attachments = true
 enable_lfs = true
-scm_backend = "git"
 sync_subdirectory = "projects"
 ```
 

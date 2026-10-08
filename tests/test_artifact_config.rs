@@ -39,7 +39,6 @@ fn update_artifacts(enable: Option<&str>, disable: Option<&str>) -> anyhow::Resu
         None,
         None,
         None,
-        None,
         enable.map(str::to_string),
         disable.map(str::to_string),
     )

@@ -152,7 +152,7 @@ fn git(repo: &Path, args: &[&str]) -> String {
 
 fn init_git_repo(path: &Path) {
     fs::create_dir_all(path).unwrap();
-    claude_code_sync::scm::init(path).unwrap();
+    claude_code_sync::git::GitRepo::init(path).unwrap();
 }
 
 #[test]

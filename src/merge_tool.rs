@@ -17,7 +17,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{Duration, Instant};
 
-use crate::scm::{ConflictChoice, ConflictedFile};
+use crate::git::{ConflictChoice, ConflictedFile};
 
 /// How a merge window ended.
 #[derive(Debug, PartialEq, Eq)]

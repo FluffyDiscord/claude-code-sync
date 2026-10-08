@@ -40,10 +40,10 @@ pub fn handle_purge(older_than_days: Option<u32>, dry_run: bool, assume_yes: boo
     // Opened and checked before anything is deleted: a repository that cannot
     // record the removal must stop the purge while every file still exists.
     let repo = purge::open_sync_repo(&state.sync_repo_path)?;
-    purge::ensure_nothing_uncommitted(repo.as_ref())?;
+    purge::ensure_nothing_uncommitted(&repo)?;
 
     let report = purge::apply(&plan)?;
-    let committed = purge::commit_removals(repo.as_ref(), &plan);
+    let committed = purge::commit_removals(&repo, &plan);
     report_outcome(&report, matches!(committed, Ok(true)));
     committed?;
     Ok(())
@@ -68,7 +68,7 @@ pub fn purge_after_sync(filter: &FilterConfig, repo_root: &Path) -> Result<()> {
     }
 
     let repo = purge::open_sync_repo(repo_root)?;
-    purge::ensure_nothing_uncommitted(repo.as_ref())?;
+    purge::ensure_nothing_uncommitted(&repo)?;
 
     println!(
         "  {} {} transcripts older than {} days...",

@@ -88,7 +88,6 @@ pub fn handle_config_export() -> Result<()> {
         exclude_attachments: filter.exclude_attachments,
         exclude_older_than_days: filter.exclude_older_than_days,
         enable_lfs: filter.enable_lfs,
-        scm_backend: filter.scm_backend,
         sync_subdirectory: filter.sync_subdirectory,
         use_project_name_only: filter.use_project_name_only,
         sync_artifacts: filter.sync_artifacts.clone(),
@@ -217,11 +216,10 @@ mod tests {
         }
     }
 
-    fn filter_with(scm_backend: &str, subdirectory: &str, days: Option<u32>) -> FilterConfig {
+    fn filter_with(subdirectory: &str, days: Option<u32>) -> FilterConfig {
         FilterConfig {
             exclude_attachments: true,
             exclude_older_than_days: days,
-            scm_backend: scm_backend.to_string(),
             sync_subdirectory: subdirectory.to_string(),
             use_project_name_only: true,
             ..Default::default()
@@ -235,7 +233,7 @@ mod tests {
             .with_multi_repo_state("/tmp/test-repo", Some("https://github.com/user/repo.git"))
             .with_filter_config(&FilterConfig {
                 enable_lfs: true,
-                ..filter_with("git", "my-projects", Some(30))
+                ..filter_with("my-projects", Some(30))
             });
 
         handle_config_export().expect("export should succeed");
@@ -253,7 +251,6 @@ mod tests {
         assert!(exported.exclude_attachments);
         assert_eq!(exported.exclude_older_than_days, Some(30));
         assert!(exported.enable_lfs);
-        assert_eq!(exported.scm_backend, "git");
         assert_eq!(exported.sync_subdirectory, "my-projects");
         assert!(exported.use_project_name_only);
     }
@@ -300,7 +297,6 @@ mod tests {
         assert!(!exported.exclude_attachments);
         assert!(exported.exclude_older_than_days.is_none());
         assert!(!exported.enable_lfs);
-        assert_eq!(exported.scm_backend, "git");
         assert_eq!(exported.sync_subdirectory, "projects");
         assert!(!exported.use_project_name_only);
     }
@@ -313,7 +309,7 @@ mod tests {
                 "/home/user/sync-repo",
                 Some("git@github.com:user/history.git"),
             )
-            .with_filter_config(&filter_with("mercurial", "conversations", Some(90)));
+            .with_filter_config(&filter_with("conversations", Some(90)));
 
         handle_config_export().unwrap();
 
@@ -330,7 +326,6 @@ mod tests {
         assert!(parsed.exclude_attachments);
         assert_eq!(parsed.exclude_older_than_days, Some(90));
         assert!(!parsed.enable_lfs);
-        assert_eq!(parsed.scm_backend, "mercurial");
         assert_eq!(parsed.sync_subdirectory, "conversations");
         assert!(parsed.use_project_name_only);
     }
@@ -346,7 +341,6 @@ mod tests {
 
         let table: toml::Table = toml::from_str(&env.exported_raw()).unwrap();
         assert!(table.contains_key("repo_path"));
-        assert!(table.contains_key("scm_backend"));
         assert!(table.contains_key("sync_subdirectory"));
     }
 }

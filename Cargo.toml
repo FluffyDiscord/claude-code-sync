@@ -58,7 +58,6 @@ walkdir = "2.5"
 serde_json = "1.0.150"
 dirs = "6.0.0"
 serial_test = "3.5.0"
-rstest = "0.26.1"
 
 # Used by bin/release.sh for local cross-builds: optimized for size. `release`
 # stays untouched, so `cargo install` and the release artifacts CI publishes

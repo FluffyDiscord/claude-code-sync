@@ -25,13 +25,6 @@ jobs:
       - name: Cache cargo build
         uses: Swatinem/rust-cache@v2
 
-      - name: Install Mercurial (for SCM backend tests)
-        if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y mercurial
-          hg --version
-
       - name: Configure git identity for tests
         run: |
           git config --global user.email "ci@github.actions"
@@ -67,33 +60,6 @@ jobs:
       - name: Run clippy
         run: mise run lint
 
-  test-scm:
-    name: SCM Backend Tests
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v7
-
-      - name: Install mise
-        uses: jdx/mise-action@v4
-
-      - name: Cache cargo build
-        uses: Swatinem/rust-cache@v2
-
-      - name: Install Mercurial
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y mercurial
-          hg --version
-
-      - name: Configure git identity for tests
-        run: |
-          git config --global user.email "ci@github.actions"
-          git config --global user.name "GitHub Actions CI"
-
-      - name: Run SCM backend tests (with Mercurial guard)
-        run: mise run test-scm
-
   e2e:
     name: End-to-End Tests
     runs-on: ubuntu-latest
@@ -127,11 +93,6 @@ jobs:
 
       - name: Cache cargo build
         uses: Swatinem/rust-cache@v2
-
-      - name: Install Mercurial (for SCM backend tests)
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y mercurial
 
       - name: Configure git identity for tests
         run: |

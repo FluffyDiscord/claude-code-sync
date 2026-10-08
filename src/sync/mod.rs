@@ -98,13 +98,13 @@ fn describe_change_counts(counts: &CategoryCounts) -> String {
 /// would sweep that work into this commit, and a push commits the rules along
 /// with it anyway.
 pub(crate) fn commit_sync_attributes(
-    repo: &dyn crate::scm::Scm,
+    repo: &crate::git::GitRepo,
     repo_path: &std::path::Path,
 ) -> Result<()> {
     if repo.has_changes()? {
         return Ok(());
     }
-    if !crate::scm::attributes::ensure_sync_attributes(repo_path)? {
+    if !crate::git::attributes::ensure_sync_attributes(repo_path)? {
         return Ok(());
     }
 
@@ -175,7 +175,7 @@ pub fn sync_bidirectional(
 mod tests {
     use super::*;
     use crate::filter::FilterConfig;
-    use crate::scm;
+    use crate::git::GitRepo;
     use serial_test::serial;
     use std::path::Path;
     use std::process::Command;
@@ -200,7 +200,7 @@ mod tests {
     fn adding_the_rules_converts_a_hook_stored_with_crlf_to_lf() {
         let repo_dir = TempDir::new().unwrap();
         let repo_path = repo_dir.path();
-        let repo = scm::init(repo_path).unwrap();
+        let repo = GitRepo::init(repo_path).unwrap();
         git_output(repo_path, &["config", "user.name", "Old"]);
         git_output(repo_path, &["config", "user.email", "old@local"]);
         git_output(repo_path, &["config", "core.autocrlf", "false"]);
@@ -209,7 +209,7 @@ mod tests {
         repo.stage_all().unwrap();
         repo.commit("written by an older version").unwrap();
 
-        commit_sync_attributes(repo.as_ref(), repo_path).unwrap();
+        commit_sync_attributes(&repo, repo_path).unwrap();
 
         let stored_hook = git_output(repo_path, &["show", "HEAD:hook.sh"]);
         let commit_count = git_output(repo_path, &["rev-list", "--count", "HEAD"]);
@@ -230,7 +230,7 @@ mod tests {
         let repo_path = temp_dir.path().join("test-repo");
 
         // Initialize a test repo
-        scm::init(&repo_path).unwrap();
+        GitRepo::init(&repo_path).unwrap();
 
         // Save a test state
         let state = SyncState {

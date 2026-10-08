@@ -49,19 +49,6 @@ run = [
   "cargo test --all-features --verbose -- --test-threads=1",
 ]
 
-[tasks.test-scm]
-description = "SCM backend tests; asserts the Mercurial cases actually ran (requires hg)"
-run = """
-#!/usr/bin/env bash
-set -euo pipefail
-out=$(mktemp)
-cargo test --test scm_backend_tests --verbose -- --test-threads=1 2>&1 | tee "$out"
-if ! grep -q "case_2_mercurial" "$out"; then
-  echo "ERROR: Mercurial tests did not run! Is hg installed?" >&2
-  exit 1
-fi
-"""
-
 [tasks.audit]
 description = "Security audit of dependencies"
 run = "cargo audit"

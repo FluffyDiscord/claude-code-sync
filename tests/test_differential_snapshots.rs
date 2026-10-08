@@ -3,9 +3,9 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use tempfile::TempDir;
 
+use claude_code_sync::git::GitRepo;
 use claude_code_sync::history::OperationType;
 use claude_code_sync::parser::ConversationEntry;
-use claude_code_sync::scm;
 use claude_code_sync::undo::Snapshot;
 
 // ============================================================================
@@ -658,8 +658,8 @@ fn test_broken_snapshot_chain() {
 }
 
 #[test]
-fn test_differential_snapshot_with_scm() {
-    println!("\n=== Test: Differential Snapshots with SCM Integration ===\n");
+fn test_differential_snapshot_with_git() {
+    println!("\n=== Test: Differential Snapshots with Git Integration ===\n");
 
     let temp_dir = TempDir::new().unwrap();
     let repo_dir = temp_dir.path().join("repo");
@@ -669,7 +669,7 @@ fn test_differential_snapshot_with_scm() {
     fs::create_dir_all(&snapshots_dir).unwrap();
 
     // Initialize repository
-    let repo = scm::init(&repo_dir).unwrap();
+    let repo = GitRepo::init(&repo_dir).unwrap();
 
     // Create initial commit
     let file1 = repo_dir.join("file1.txt");
@@ -725,7 +725,7 @@ fn test_differential_snapshot_with_scm() {
         "Should capture new commit hash"
     );
 
-    println!("\n✓ Test passed! SCM integration with differential snapshots works correctly.\n");
+    println!("\n✓ Test passed! Git integration with differential snapshots works correctly.\n");
 }
 
 #[test]

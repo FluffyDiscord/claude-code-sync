@@ -4,8 +4,6 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use crate::scm::Backend;
-
 /// Filter configuration for syncing Claude Code history
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FilterConfig {
@@ -38,10 +36,6 @@ pub struct FilterConfig {
     /// Only used when enable_lfs is true
     #[serde(default = "default_lfs_patterns")]
     pub lfs_patterns: Vec<String>,
-
-    /// SCM backend to use: "git" or "mercurial" (default: "git")
-    #[serde(default = "default_scm_backend")]
-    pub scm_backend: String,
 
     /// Subdirectory within sync repo to store projects (default: "projects")
     /// Useful when using an existing repo and want to store history in a specific path
@@ -105,10 +99,6 @@ fn default_max_file_size() -> u64 {
     10 * 1024 * 1024 // 10MB
 }
 
-fn default_scm_backend() -> String {
-    "git".to_string()
-}
-
 fn default_sync_subdirectory() -> String {
     "projects".to_string()
 }
@@ -123,7 +113,6 @@ impl Default for FilterConfig {
             exclude_attachments: false,
             enable_lfs: false,
             lfs_patterns: default_lfs_patterns(),
-            scm_backend: default_scm_backend(),
             sync_subdirectory: default_sync_subdirectory(),
             use_project_name_only: false,
             sync_artifacts: Default::default(),
@@ -264,29 +253,8 @@ impl FilterConfig {
         true
     }
 
-    /// Get the configured SCM backend.
-    pub fn backend(&self) -> Result<Backend> {
-        match self.scm_backend.to_lowercase().as_str() {
-            "git" => Ok(Backend::Git),
-            "mercurial" | "hg" => Ok(Backend::Mercurial),
-            other => bail!(
-                "Unknown SCM backend: '{}'. Use 'git' or 'mercurial'.",
-                other
-            ),
-        }
-    }
-
     /// Validate the configuration.
-    ///
-    /// Returns an error if LFS is enabled with a non-git backend.
     pub fn validate(&self) -> Result<()> {
-        if self.enable_lfs && self.scm_backend.to_lowercase() != "git" {
-            bail!(
-                "Git LFS is only supported with the 'git' backend. \
-                 Current backend: '{}'",
-                self.scm_backend
-            );
-        }
         if self.sync_subdirectory == crate::artifacts::registry::ARTIFACTS_SUBDIR {
             bail!(
                 "sync_subdirectory cannot be '{}': that directory is reserved \
@@ -473,7 +441,6 @@ pub fn update_config(
     exclude_attachments: Option<bool>,
     enable_lfs: Option<bool>,
     lfs_patterns: Option<String>,
-    scm_backend: Option<String>,
     sync_subdirectory: Option<String>,
     use_project_name_only: Option<bool>,
     enable_artifacts: Option<String>,
@@ -535,21 +502,6 @@ pub fn update_config(
         println!(
             "{}",
             format!("Set LFS patterns: {:?}", config.lfs_patterns).green()
-        );
-    }
-
-    if let Some(backend) = scm_backend {
-        let backend_lower = backend.to_lowercase();
-        if backend_lower != "git" && backend_lower != "mercurial" && backend_lower != "hg" {
-            bail!(
-                "Invalid SCM backend: '{}'. Use 'git' or 'mercurial'.",
-                backend
-            );
-        }
-        config.scm_backend = backend_lower;
-        println!(
-            "{}",
-            format!("Set SCM backend: {}", config.scm_backend).green()
         );
     }
 
@@ -707,7 +659,6 @@ pub fn show_config() -> Result<()> {
             "Disabled".yellow()
         }
     );
-    println!("  {}: {}", "SCM backend".cyan(), config.scm_backend.green());
     println!(
         "  {}: {}",
         "Sync subdirectory".cyan(),

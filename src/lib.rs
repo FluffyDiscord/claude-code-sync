@@ -23,7 +23,7 @@
 //! The library is organized into modules that handle different aspects of the sync process:
 //!
 //! - Configuration and state management ([`config`], [`filter`])
-//! - Source control operations, Git or Mercurial ([`scm`])
+//! - Git operations on the sync repository ([`git`])
 //! - Conversation parsing and analysis ([`parser`])
 //! - Conflict detection and resolution ([`conflict`], [`interactive_conflict`], [`merge`])
 //! - Operation tracking and undo ([`history`], [`undo`])
@@ -72,13 +72,11 @@ pub mod interactive_conflict;
 /// excluding attachments to sync only JSONL conversation files).
 pub mod filter;
 
-/// Source Control Management abstraction layer.
+/// Git access for the sync repository.
 ///
-/// Provides a unified interface over Git and Mercurial, driving each through its
-/// CLI. Supports repository initialization, cloning, committing, pushing, pulling,
-/// and other common SCM operations through the [`scm::Scm`] trait; the backend is
-/// selected by the `scm_backend` setting in [`filter::FilterConfig`].
-pub mod scm;
+/// Drives git through its CLI: initialization, cloning, committing, pushing,
+/// pulling, and other repository operations on [`git::GitRepo`].
+pub mod git;
 
 /// Operation history tracking and persistence.
 ///

@@ -18,10 +18,10 @@ use chrono::Duration;
 use tempfile::{tempdir, TempDir};
 
 use super::Snapshot;
+use crate::git::GitRepo;
 use crate::history::{
     ConversationSummary, OperationHistory, OperationRecord, OperationType, SyncOperation,
 };
-use crate::scm::{self, Scm};
 
 /// Write `content` to `dir/name` and return the path.
 pub(super) fn create_test_file(dir: &Path, name: &str, content: &str) -> PathBuf {
@@ -30,10 +30,10 @@ pub(super) fn create_test_file(dir: &Path, name: &str, content: &str) -> PathBuf
     path
 }
 
-/// A temp dir holding an initialized SCM repo with one committed file.
-pub(super) fn setup_test_repo() -> (TempDir, Box<dyn Scm>) {
+/// A temp dir holding an initialized git repo with one committed file.
+pub(super) fn setup_test_repo() -> (TempDir, GitRepo) {
     let temp_dir = tempdir().unwrap();
-    let repo = scm::init(temp_dir.path()).unwrap();
+    let repo = GitRepo::init(temp_dir.path()).unwrap();
 
     let test_file = temp_dir.path().join("test.txt");
     fs::write(&test_file, "initial content").unwrap();

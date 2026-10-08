@@ -7,7 +7,6 @@ use std::path::Path;
 use claude_code_sync::artifacts::engine::{ensure_ignore_files, push_artifacts};
 use claude_code_sync::artifacts::registry::{ArtifactToggles, CategoryId};
 use claude_code_sync::filter::FilterConfig;
-use claude_code_sync::scm::Backend;
 use tempfile::TempDir;
 
 /// Build a `~/.claude`-shaped tree with every syncable artifact plus the
@@ -344,9 +343,9 @@ fn test_ignore_file_managed_block_is_idempotent_and_preserving() {
     let repo = TempDir::new().unwrap();
     fs::write(repo.path().join(".gitignore"), "user-stuff/\n").unwrap();
 
-    let changed_first = ensure_ignore_files(repo.path(), Backend::Git).unwrap();
+    let changed_first = ensure_ignore_files(repo.path()).unwrap();
     let after_first = fs::read_to_string(repo.path().join(".gitignore")).unwrap();
-    let changed_second = ensure_ignore_files(repo.path(), Backend::Git).unwrap();
+    let changed_second = ensure_ignore_files(repo.path()).unwrap();
     let after_second = fs::read_to_string(repo.path().join(".gitignore")).unwrap();
 
     assert!(changed_first, "first run writes the block");
@@ -360,19 +359,6 @@ fn test_ignore_file_managed_block_is_idempotent_and_preserving() {
     assert!(after_first.contains("settings.local.json"));
     assert!(after_first.contains("*.pem"));
     assert!(after_first.contains(".env*"));
-    // Only the git ignore file for a git backend.
-    assert!(!repo.path().join(".hgignore").exists());
-}
-
-#[test]
-fn test_ignore_file_for_mercurial_backend() {
-    let repo = TempDir::new().unwrap();
-
-    ensure_ignore_files(repo.path(), Backend::Mercurial).unwrap();
-
-    let hgignore = fs::read_to_string(repo.path().join(".hgignore")).unwrap();
-    assert!(hgignore.contains("syntax: glob"));
-    assert!(hgignore.contains(".credentials.json"));
 }
 
 // ============================================================================

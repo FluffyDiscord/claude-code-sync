@@ -7,7 +7,7 @@ use std::collections::HashMap;
 
 use super::interactive::handle_config_interactive;
 use crate::config::ConfigManager;
-use crate::scm;
+use crate::git::{self, GitRepo};
 use crate::sync::{MultiRepoState, RepoConfig};
 
 /// Try to recover an existing repo if state.json is missing but repo exists
@@ -20,11 +20,11 @@ fn try_recover_existing_repo() -> Result<Option<MultiRepoState>> {
         Err(_) => return Ok(None),
     };
 
-    if !default_repo.exists() || !scm::is_repo(&default_repo) {
+    if !default_repo.exists() || !git::is_repo(&default_repo) {
         return Ok(None);
     }
 
-    let (has_remote, remote_url) = match scm::open(&default_repo) {
+    let (has_remote, remote_url) = match GitRepo::open(&default_repo) {
         Ok(repo) => {
             let has_remote = repo.has_remote("origin");
             let remote_url = if has_remote {

@@ -7,6 +7,7 @@ use std::path::PathBuf;
 // modules explicitly rather than glob-importing both the crate root and
 // `handlers` — both export a `config`, and two globs supplying the same name
 // is an ambiguity error at every `config::` call site.
+use claude_code_sync::git::GitRepo;
 use claude_code_sync::handlers::{
     handle_cleanup_snapshots, handle_config_export, handle_config_interactive,
     handle_config_wizard, handle_history_clear, handle_history_last, handle_history_list,
@@ -14,7 +15,7 @@ use claude_code_sync::handlers::{
     is_initialized, run_init_from_config, run_onboarding_flow, try_init_from_config,
     validate_older_than,
 };
-use claude_code_sync::{config, filter, logger, report, scm, self_update, sync, VerbosityLevel};
+use claude_code_sync::{config, filter, logger, report, self_update, sync, VerbosityLevel};
 
 #[derive(Parser)]
 #[command(name = "claude-code-sync")]
@@ -187,10 +188,6 @@ enum Commands {
         /// File patterns to track with LFS (comma-separated, e.g., "*.jsonl,*.png")
         #[arg(long)]
         lfs_patterns: Option<String>,
-
-        /// SCM backend: git or mercurial (default: git)
-        #[arg(long)]
-        scm_backend: Option<String>,
 
         /// Subdirectory within sync repo for storing projects (default: "projects")
         #[arg(long)]
@@ -499,7 +496,7 @@ fn main() -> Result<()> {
                     format!("Cloning from {} to {}...", remote_url, clone_path.display()).cyan()
                 );
 
-                scm::clone(remote_url, &clone_path)?;
+                GitRepo::clone(remote_url, &clone_path)?;
                 sync::init_from_onboarding(&clone_path, Some(remote_url), true)?;
 
                 // Save default filter configuration if it doesn't exist
@@ -526,7 +523,7 @@ fn main() -> Result<()> {
                     .cyan()
                 );
 
-                scm::clone(&remote_url, &default_path)?;
+                GitRepo::clone(&remote_url, &default_path)?;
                 sync::init_from_onboarding(&default_path, Some(&remote_url), true)?;
 
                 // Save default filter configuration if it doesn't exist
@@ -635,7 +632,6 @@ fn main() -> Result<()> {
             exclude_attachments,
             enable_lfs,
             lfs_patterns,
-            scm_backend,
             sync_subdirectory,
             use_project_name_only,
             enable_artifacts,
@@ -658,7 +654,6 @@ fn main() -> Result<()> {
                 || exclude_attachments.is_some()
                 || enable_lfs.is_some()
                 || lfs_patterns.is_some()
-                || scm_backend.is_some()
                 || sync_subdirectory.is_some()
                 || use_project_name_only.is_some()
                 || enable_artifacts.is_some()
@@ -715,7 +710,6 @@ fn main() -> Result<()> {
                         exclude_attachments,
                         enable_lfs,
                         lfs_patterns,
-                        scm_backend,
                         sync_subdirectory,
                         use_project_name_only,
                         enable_artifacts,

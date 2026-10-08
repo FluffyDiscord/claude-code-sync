@@ -9,8 +9,8 @@ use std::path::Path;
 
 use crate::config;
 use crate::filter;
+use crate::git::GitRepo;
 use crate::onboarding::{self, InitConfig};
-use crate::scm;
 use crate::sync;
 
 /// Check if claude-code-sync has been initialized
@@ -31,7 +31,7 @@ pub fn run_onboarding_flow() -> Result<()> {
             println!();
             println!("{}", "✓ Cloning repository...".cyan());
 
-            scm::clone(remote_url, &onboarding_config.repo_path)
+            GitRepo::clone(remote_url, &onboarding_config.repo_path)
                 .context("Failed to clone repository")?;
 
             println!("{}", "✓ Repository cloned successfully!".green());
@@ -88,7 +88,7 @@ pub fn run_init_from_config<P: AsRef<Path>>(config_path: Option<P>) -> Result<()
         if let Some(ref remote_url) = onboarding_config.remote_url {
             println!("  {} {}", "Cloning from:".cyan(), remote_url);
 
-            scm::clone(remote_url, &onboarding_config.repo_path)
+            GitRepo::clone(remote_url, &onboarding_config.repo_path)
                 .context("Failed to clone repository")?;
 
             println!("{}", "  ✓ Repository cloned".green());
@@ -108,7 +108,6 @@ pub fn run_init_from_config<P: AsRef<Path>>(config_path: Option<P>) -> Result<()
         exclude_attachments: init_config.exclude_attachments,
         exclude_older_than_days: init_config.exclude_older_than_days,
         enable_lfs: init_config.enable_lfs,
-        scm_backend: init_config.scm_backend.clone(),
         sync_subdirectory: init_config.sync_subdirectory.clone(),
         sync_artifacts: init_config.sync_artifacts.clone(),
         ..Default::default()
@@ -126,7 +125,6 @@ pub fn run_init_from_config<P: AsRef<Path>>(config_path: Option<P>) -> Result<()
     if let Some(ref url) = onboarding_config.remote_url {
         println!("  {} {}", "Remote:".cyan(), url);
     }
-    println!("  {} {}", "Backend:".cyan(), init_config.scm_backend);
     if init_config.enable_lfs {
         println!("  {} enabled", "LFS:".cyan());
     }

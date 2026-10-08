@@ -3,8 +3,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use super::snapshot::Snapshot;
+use crate::git::GitRepo;
 use crate::history::{OperationHistory, OperationType};
-use crate::scm;
 
 /// Undo the last pull operation
 ///
@@ -104,15 +104,15 @@ pub fn undo_pull(history_path: Option<PathBuf>, allowed_base_dir: Option<&Path>)
 /// 1. Loads the operation history
 /// 2. Finds the most recent push operation
 /// 3. Gets the commit hash from the operation record (no snapshot needed!)
-/// 4. Uses SCM abstraction to reset the repository to the previous commit
+/// 4. Soft-resets the repository to the previous commit
 /// 5. Updates the operation history to mark the push as undone
 /// 6. Warns the user if they need to force push to the remote
 ///
-/// Note: Push operations no longer create file snapshots. Git/Mercurial already
+/// Note: Push operations no longer create file snapshots. Git already
 /// tracks history, so we just store the commit hash and use `reset` to undo.
 ///
 /// # Arguments
-/// * `repo_path` - Path to the SCM repository
+/// * `repo_path` - Path to the git repository
 /// * `history_path` - Optional custom path for operation history (for testing)
 ///
 /// # Returns
@@ -149,8 +149,7 @@ pub fn undo_push(repo_path: &Path, history_path: Option<PathBuf>) -> Result<Stri
         ));
     };
 
-    // Open the SCM repository
-    let repo = scm::open(repo_path)
+    let repo = GitRepo::open(repo_path)
         .with_context(|| format!("Failed to open repository at {}", repo_path.display()))?;
 
     // Check if we need to warn about remote (before reset)
@@ -317,7 +316,7 @@ mod tests {
         assert!(result.contains("Successfully undone"));
         assert!(result.contains(&initial_hash[..8]));
 
-        let repo_check = scm::open(temp_dir.path()).unwrap();
+        let repo_check = GitRepo::open(temp_dir.path()).unwrap();
         assert_eq!(repo_check.current_commit_hash().unwrap(), initial_hash);
     }
 
@@ -353,7 +352,7 @@ mod tests {
             .push(OperationType::Push, "main", Some(&snapshot_path))
             .save();
 
-        let repo = scm::init(temp_dir.path()).unwrap();
+        let repo = GitRepo::init(temp_dir.path()).unwrap();
         let test_file = temp_dir.path().join("test.txt");
         fs::write(&test_file, "test").unwrap();
         repo.stage_all().unwrap();
@@ -524,7 +523,7 @@ mod tests {
         );
 
         if result.is_ok() {
-            let repo_check = scm::open(temp_dir.path()).unwrap();
+            let repo_check = GitRepo::open(temp_dir.path()).unwrap();
             assert_eq!(repo_check.current_commit_hash().unwrap(), initial_hash);
             assert!(
                 !snapshot_path.exists(),

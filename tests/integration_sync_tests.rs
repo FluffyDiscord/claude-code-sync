@@ -4,11 +4,11 @@ use tempfile::TempDir;
 use walkdir::WalkDir;
 
 // Import the necessary modules from claude_code_sync
+use claude_code_sync::git::GitRepo;
 use claude_code_sync::history::{
     ConversationSummary, OperationHistory, OperationType, SyncOperation,
 };
 use claude_code_sync::parser::ConversationSession;
-use claude_code_sync::scm;
 use claude_code_sync::sync::SyncState;
 use claude_code_sync::undo::{undo_pull, undo_push, Snapshot};
 
@@ -135,7 +135,7 @@ fn test_full_push_pull_cycle() {
     );
 
     // Initialize sync repository
-    let repo = scm::init(sync_repo_path).unwrap();
+    let repo = GitRepo::init(sync_repo_path).unwrap();
 
     // Create an initial commit so we have a valid history
     let readme_path = sync_repo_path.join("README.md");
@@ -395,7 +395,7 @@ fn test_undo_push_resets_repo() {
     let snapshots_dir = test_dir.path().join("snapshots");
 
     // Initialize repository
-    let repo = scm::init(test_dir.path()).unwrap();
+    let repo = GitRepo::init(test_dir.path()).unwrap();
 
     // Create and commit initial file
     let file1 = test_dir.path().join("file1.txt");
@@ -458,8 +458,8 @@ fn test_undo_push_resets_repo() {
     assert!(result.contains("Successfully undone"));
     assert!(result.contains(&initial_commit_hash[..8]));
 
-    // Verify repo was reset to previous commit using scm module
-    let reopened_repo = scm::open(test_dir.path()).unwrap();
+    // Verify repo was reset to previous commit using GitRepo
+    let reopened_repo = GitRepo::open(test_dir.path()).unwrap();
     let current_hash_after = reopened_repo.current_commit_hash().unwrap();
     assert_eq!(current_hash_after, initial_commit_hash);
 
@@ -926,7 +926,7 @@ fn test_push_on_new_repo_without_commits() {
     let repo_path = temp_dir.path();
 
     // Initialize git repo (no commits yet)
-    let repo = scm::init(repo_path).unwrap();
+    let repo = GitRepo::init(repo_path).unwrap();
 
     // Verify there are no commits yet
     let commit_result = repo.current_commit_hash();

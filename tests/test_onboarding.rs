@@ -6,8 +6,8 @@ mod common;
 use anyhow::Result;
 use claude_code_sync::config::ConfigManager;
 use claude_code_sync::filter::FilterConfig;
+use claude_code_sync::git::GitRepo;
 use claude_code_sync::onboarding::InitConfig;
-use claude_code_sync::scm;
 use claude_code_sync::sync::{self, SyncState};
 use common::ConfigEnv;
 use serial_test::serial;
@@ -24,7 +24,7 @@ fn test_init_from_onboarding() -> Result<()> {
     let env = ConfigEnv::new();
     let repo_path = env.join("onboarding-test-repo");
 
-    scm::init(&repo_path)?;
+    GitRepo::init(&repo_path)?;
     sync::init_from_onboarding(&repo_path, None, false)?;
 
     let state = SyncState::load()?;
@@ -41,7 +41,7 @@ fn test_init_from_onboarding_with_remote() -> Result<()> {
     let env = ConfigEnv::new();
     let repo_path = env.join("onboarding-remote-test");
 
-    scm::init(&repo_path)?;
+    GitRepo::init(&repo_path)?;
     sync::init_from_onboarding(&repo_path, Some("https://github.com/user/repo.git"), true)?;
 
     let state = SyncState::load()?;
@@ -59,7 +59,7 @@ fn test_init_from_onboarding_sets_is_cloned_flag() -> Result<()> {
     let repo_path = env.join("cloned-repo-test");
 
     // Simulating the post-clone state.
-    scm::init(&repo_path)?;
+    GitRepo::init(&repo_path)?;
     sync::init_from_onboarding(&repo_path, Some("https://github.com/user/repo.git"), true)?;
 
     let state = SyncState::load()?;
@@ -79,7 +79,7 @@ fn test_init_from_onboarding_local_repo_not_cloned() -> Result<()> {
     let env = ConfigEnv::new();
     let repo_path = env.join("local-repo-test");
 
-    scm::init(&repo_path)?;
+    GitRepo::init(&repo_path)?;
     sync::init_from_onboarding(&repo_path, None, false)?;
 
     let state = SyncState::load()?;
@@ -176,11 +176,11 @@ fn test_init_sync_repo_does_not_overwrite_existing_filter_config() -> Result<()>
 // ---------------------------------------------------------------------------
 
 #[test]
-fn test_scm_clone_validates_path() -> Result<()> {
+fn test_git_clone_validates_path() -> Result<()> {
     let temp_dir = TempDir::new()?;
     let clone_path = temp_dir.path().join("cloned-repo");
 
-    let result = scm::clone("invalid-url", &clone_path);
+    let result = GitRepo::clone("invalid-url", &clone_path);
     assert!(result.is_err());
 
     let err_msg = result.err().unwrap().to_string();
@@ -194,7 +194,7 @@ fn test_clone_with_invalid_url_fails() -> Result<()> {
     let temp_dir = TempDir::new()?;
     let clone_path = temp_dir.path().join("clone-test-repo");
 
-    let result = scm::clone("not-a-valid-url", &clone_path);
+    let result = GitRepo::clone("not-a-valid-url", &clone_path);
     assert!(result.is_err(), "Clone should fail with invalid URL");
 
     Ok(())
@@ -210,7 +210,7 @@ fn test_clone_creates_parent_directories() -> Result<()> {
         .join("path")
         .join("repo");
 
-    let result = scm::clone(
+    let result = GitRepo::clone(
         "https://invalid-url-that-wont-work.example.com/repo.git",
         &nested_path,
     );
