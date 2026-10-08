@@ -2,8 +2,9 @@
 
 use anyhow::{anyhow, Context, Result};
 use std::collections::BTreeMap;
+use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
 
 use super::{ConflictChoice, ConflictResolver, ConflictedFile, Scm};
 
@@ -103,6 +104,32 @@ impl GitScm {
     /// Run a git command, returning Ok if it succeeds (ignoring stdout).
     fn run_git_ok(&self, args: &[&str]) -> Result<()> {
         self.run_git(args)?;
+        Ok(())
+    }
+
+    /// Run a quiet network git command with stderr passed through: git draws
+    /// its own progress on a terminal and prints its own errors anywhere.
+    fn run_git_with_progress(&self, args: &[&str]) -> Result<()> {
+        let mut command = Command::new("git");
+        command
+            .args(args)
+            .arg("--quiet")
+            .current_dir(&self.workdir)
+            .stderr(Stdio::inherit());
+
+        let on_terminal = std::io::stderr().is_terminal();
+        if on_terminal {
+            command.arg("--progress");
+        }
+
+        let status = command
+            .status()
+            .with_context(|| format!("Failed to run 'git {}'", args.join(" ")))?;
+
+        if !status.success() {
+            return Err(anyhow!("git {} failed", args.join(" ")));
+        }
+
         Ok(())
     }
 
@@ -307,29 +334,19 @@ impl Scm for GitScm {
     }
 
     fn push(&self, remote: &str, branch: &str) -> Result<()> {
-        let output = Command::new("git")
-            .args(["push", remote, branch])
-            .current_dir(&self.workdir)
-            .output()
-            .context("Failed to run 'git push'")?;
-
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(anyhow!(
-                "Failed to push to remote '{}': {}\n\n\
-                Possible causes:\n\
-                1. Authentication failed - ensure credentials are configured\n\
-                2. No permission to push to this repository\n\
-                3. Network connectivity issues\n\
-                4. Remote branch protection rules\n\n\
-                For HTTPS: Run 'git config --global credential.helper store' and try again\n\
-                For SSH: Ensure SSH keys are set up with 'ssh -T git@github.com'",
-                remote,
-                stderr
-            ));
-        }
-
-        Ok(())
+        self.run_git_with_progress(&["push", remote, branch])
+            .with_context(|| {
+                format!(
+                    "Failed to push to remote '{remote}'\n\n\
+                    Possible causes:\n\
+                    1. Authentication failed - ensure credentials are configured\n\
+                    2. No permission to push to this repository\n\
+                    3. Network connectivity issues\n\
+                    4. Remote branch protection rules\n\n\
+                    For HTTPS: Run 'git config --global credential.helper store' and try again\n\
+                    For SSH: Ensure SSH keys are set up with 'ssh -T git@github.com'"
+                )
+            })
     }
 
     /// Fetch and merge the remote branch.
@@ -355,7 +372,7 @@ impl Scm for GitScm {
             return Ok(());
         }
 
-        self.run_git_ok(&["fetch", remote, branch])
+        self.run_git_with_progress(&["fetch", remote, branch])
             .with_context(|| format!("Failed to fetch from remote '{remote}'"))?;
 
         // A repository `init` just created has no commit of its own, and git
@@ -774,6 +791,50 @@ mod tests {
             .unwrap();
 
         assert!(machine.pull("origin", "main", &stop_at_conflicts).is_err());
+    }
+
+    #[test]
+    fn a_push_to_an_unreachable_remote_is_an_error() {
+        let root = TempDir::new().unwrap();
+        let fresh = root.path().join("fresh");
+        let machine = GitScm::init(&fresh).unwrap();
+        commit_file(&machine, &fresh, "a.txt", "a\n");
+        machine
+            .add_remote("origin", root.path().join("missing").to_str().unwrap())
+            .unwrap();
+        let branch = machine.current_branch().unwrap();
+
+        let error = machine.push("origin", &branch).unwrap_err();
+
+        assert!(format!("{error:#}").contains("Failed to push to remote 'origin'"));
+    }
+
+    #[test]
+    fn a_push_to_a_reachable_remote_updates_its_branch() {
+        let root = TempDir::new().unwrap();
+        let remote = root.path().join("remote.git");
+        git_in(
+            root.path(),
+            &["init", "--quiet", "--bare", remote.to_str().unwrap()],
+        );
+        let fresh = root.path().join("fresh");
+        let machine = GitScm::init(&fresh).unwrap();
+        commit_file(&machine, &fresh, "a.txt", "a\n");
+        machine
+            .add_remote("origin", remote.to_str().unwrap())
+            .unwrap();
+        let branch = machine.current_branch().unwrap();
+
+        machine.push("origin", &branch).unwrap();
+
+        let local_head = machine.current_commit_hash().unwrap();
+        let remote_rev_parse = Command::new("git")
+            .args(["rev-parse", &branch])
+            .current_dir(&remote)
+            .output()
+            .unwrap();
+        let remote_head = String::from_utf8_lossy(&remote_rev_parse.stdout);
+        assert_eq!(remote_head.trim(), local_head);
     }
 
     #[test]
