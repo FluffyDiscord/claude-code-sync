@@ -17,13 +17,40 @@ pub const CLAUDE_DIR_TOKEN: &str = "__CLAUDE_DIR__";
 
 /// This machine's absolute locations and their neutral spellings.
 ///
-/// Every tokenized file is JSON, so the locations are held as they are spelled
-/// inside a JSON string: on Windows `C:\Users\me` appears in the file as
-/// `C:\\Users\\me`, and rendering it raw would write `\U`, an invalid escape.
+/// Locations are rendered with `/` separators on every OS: `C:/Users/me` is
+/// valid inside a JSON string, resolves under Windows shells and Git Bash alike,
+/// and joins cleanly with a tail stored as `__HOME__/bin/x`. A raw Windows
+/// `C:\Users\me` would write `\U`, an invalid JSON escape.
+///
+/// The repo side recognizes both spellings a Windows file may hold —
+/// `C:\\Users\\me` (escaped backslashes) and `C:/Users/me` — and stores the
+/// path tail with `/`, so a path written on Windows still resolves on Linux.
 #[derive(Debug, Clone, Default)]
 pub struct PathTokens {
-    home: String,
-    claude_dir: String,
+    home: Location,
+    claude_dir: Location,
+}
+
+/// One absolute location: how it is rendered, and every spelling tokenized.
+#[derive(Debug, Clone, Default)]
+struct Location {
+    rendered: String,
+    spellings: Vec<String>,
+}
+
+impl Location {
+    fn new(native: &str) -> Self {
+        let rendered = native.replace('\\', "/");
+        let mut spellings = vec![rendered.clone()];
+        if native.contains('\\') {
+            spellings.push(rendered.replace('/', r"\\"));
+        }
+        spellings.retain(|spelling| !spelling.is_empty());
+        Location {
+            rendered,
+            spellings,
+        }
+    }
 }
 
 impl PathTokens {
@@ -38,8 +65,8 @@ impl PathTokens {
     /// Tokens for these two absolute locations, as written on this machine.
     fn for_paths(home: &str, claude_dir: &str) -> Self {
         PathTokens {
-            home: json_string_contents(home),
-            claude_dir: json_string_contents(claude_dir),
+            home: Location::new(home),
+            claude_dir: Location::new(claude_dir),
         }
     }
 
@@ -48,8 +75,15 @@ impl PathTokens {
         let Ok(text) = std::str::from_utf8(bytes) else {
             return bytes.to_vec();
         };
-        let text = replace_path(text, &self.claude_dir, CLAUDE_DIR_TOKEN);
-        let text = replace_path(&text, &self.home, HOME_TOKEN);
+        let mut text = text.to_string();
+        for (location, token) in [
+            (&self.claude_dir, CLAUDE_DIR_TOKEN),
+            (&self.home, HOME_TOKEN),
+        ] {
+            for spelling in &location.spellings {
+                text = replace_path(&text, spelling, token);
+            }
+        }
         text.into_bytes()
     }
 
@@ -58,30 +92,17 @@ impl PathTokens {
         let Ok(text) = std::str::from_utf8(bytes) else {
             return bytes.to_vec();
         };
-        let text = text.replace(CLAUDE_DIR_TOKEN, &self.claude_dir);
-        let text = text.replace(HOME_TOKEN, &self.home);
+        let text = text.replace(CLAUDE_DIR_TOKEN, &self.claude_dir.rendered);
+        let text = text.replace(HOME_TOKEN, &self.home.rendered);
         text.into_bytes()
     }
 }
 
-/// `text` as it is spelled between the quotes of a JSON string.
-fn json_string_contents(text: &str) -> String {
-    let quoted = serde_json::to_string(text).unwrap_or_default();
-    quoted
-        .strip_prefix('"')
-        .and_then(|s| s.strip_suffix('"'))
-        .unwrap_or_default()
-        .to_string()
-}
-
 /// Replace `needle` with `token` only where the match is a whole path prefix:
 /// `/home/user` must not eat the `/home/username` of a machine that is not this one,
-/// nor the tail of an unrelated `/opt/home/user`.
+/// nor the tail of an unrelated `/opt/home/user`. The tail after a replaced
+/// prefix has its escaped backslash separators turned into `/`.
 fn replace_path(text: &str, needle: &str, token: &str) -> String {
-    if needle.is_empty() {
-        return text.to_string();
-    }
-
     let mut out = String::with_capacity(text.len());
     let mut rest = text;
     while let Some(start) = rest.find(needle) {
@@ -92,13 +113,36 @@ fn replace_path(text: &str, needle: &str, token: &str) -> String {
             || continues_a_segment(after.chars().next())
         {
             out.push_str(needle);
+            rest = after;
         } else {
             out.push_str(token);
+            rest = push_path_tail(&mut out, after);
         }
-        rest = after;
     }
     out.push_str(rest);
     out
+}
+
+/// Copy the path continuing at the start of `text` into `out`, spelling each
+/// escaped backslash separator (`\\` in the JSON text) as `/`. Returns what
+/// follows the path.
+fn push_path_tail<'a>(out: &mut String, text: &'a str) -> &'a str {
+    let mut rest = text;
+    loop {
+        if let Some(after) = rest.strip_prefix(r"\\") {
+            out.push('/');
+            rest = after;
+            continue;
+        }
+        let Some(character) = rest.chars().next() else {
+            return rest;
+        };
+        if !(continues_a_segment(Some(character)) || matches!(character, '/' | '+' | '@' | '%')) {
+            return rest;
+        }
+        out.push(character);
+        rest = &rest[character.len_utf8()..];
+    }
 }
 
 /// Whether a character next to a match makes it part of a longer path segment,
@@ -116,30 +160,60 @@ fn continues_a_segment(neighbour: Option<char>) -> bool {
 mod tests {
     use super::*;
 
+    fn windows() -> PathTokens {
+        PathTokens::for_paths(r"C:\Users\me", r"C:\Users\me\.claude")
+    }
+
     #[test]
-    fn a_windows_home_round_trips_as_valid_json() {
-        let windows = PathTokens::for_paths(r"C:\Users\me", r"C:\Users\me\.claude");
-        let live = br#"{"statusLine":{"command":"C:\\Users\\me\\.claude\\s.ps1"},"x":"C:\\Users\\me\\bin"}"#;
+    fn a_windows_backslash_path_is_stored_with_forward_slashes() {
+        let live = br#"{"statusLine":{"command":"C:\\Users\\me\\.claude\\s.ps1"},"x":"C:\\Users\\me\\bin\\y"}"#;
+        let stored = String::from_utf8(windows().to_repo(live)).unwrap();
+        assert_eq!(
+            stored,
+            r#"{"statusLine":{"command":"__CLAUDE_DIR__/s.ps1"},"x":"__HOME__/bin/y"}"#
+        );
+    }
 
-        let stored = String::from_utf8(windows.to_repo(live)).unwrap();
-        assert!(stored.contains("__CLAUDE_DIR__"), "{stored}");
-        assert!(stored.contains("__HOME__"), "{stored}");
+    #[test]
+    fn a_windows_forward_slash_path_is_tokenized() {
+        let live = br#"{"command":"bun \"C:/Users/me/.claude/plugins/statusline.mjs\""}"#;
+        let stored = String::from_utf8(windows().to_repo(live)).unwrap();
+        assert_eq!(
+            stored,
+            r#"{"command":"bun \"__CLAUDE_DIR__/plugins/statusline.mjs\""}"#
+        );
+    }
 
-        let from_linux = br#"{"statusLine":{"command":"__HOME__/bin/status.sh"}}"#;
-        let rendered = windows.to_machine(from_linux);
+    #[test]
+    fn a_windows_machine_renders_valid_json_with_forward_slashes() {
+        let from_linux =
+            br#"{"statusLine":{"command":"bun \"__CLAUDE_DIR__/s.mjs\" __HOME__/bin"}}"#;
+        let rendered = windows().to_machine(from_linux);
         let parsed: serde_json::Value = serde_json::from_slice(&rendered).unwrap();
         assert_eq!(
             parsed["statusLine"]["command"],
-            r"C:\Users\me/bin/status.sh"
+            r#"bun "C:/Users/me/.claude/s.mjs" C:/Users/me/bin"#
         );
-        assert_eq!(windows.to_machine(stored.as_bytes()), live.to_vec());
+        assert_eq!(windows().to_repo(&rendered), from_linux.to_vec());
+    }
+
+    #[test]
+    fn a_path_written_on_windows_resolves_on_linux() {
+        let live = br#"{"command":"C:\\Users\\me\\.claude\\hooks\\h.sh"}"#;
+        let stored = windows().to_repo(live);
+        let on_linux = String::from_utf8(tokens().to_machine(&stored)).unwrap();
+        assert_eq!(on_linux, r#"{"command":"/home/user/.claude/hooks/h.sh"}"#);
+    }
+
+    #[test]
+    fn an_escaped_quote_ends_the_path_tail() {
+        let live = br#"{"command":"bun \"C:\\Users\\me\\x.mjs\""}"#;
+        let stored = String::from_utf8(windows().to_repo(live)).unwrap();
+        assert_eq!(stored, r#"{"command":"bun \"__HOME__/x.mjs\""}"#);
     }
 
     fn tokens() -> PathTokens {
-        PathTokens {
-            home: "/home/user".to_string(),
-            claude_dir: "/home/user/.claude".to_string(),
-        }
+        PathTokens::for_paths("/home/user", "/home/user/.claude")
     }
 
     #[test]
@@ -190,10 +264,7 @@ mod tests {
 
     #[test]
     fn an_unknown_home_directory_changes_nothing() {
-        let tokens = PathTokens {
-            home: String::new(),
-            claude_dir: "/srv/claude".to_string(),
-        };
+        let tokens = PathTokens::for_paths("", "/srv/claude");
         let live = b"/home/user/x";
         assert_eq!(tokens.to_repo(live), live.to_vec());
     }
