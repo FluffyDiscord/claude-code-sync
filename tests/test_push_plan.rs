@@ -137,6 +137,50 @@ fn an_unchanged_session_is_left_in_the_repository_as_it_is() {
     assert_eq!(after, normalized, "an unchanged session is not rewritten");
 }
 
+/// Workflow journals carry no sessionId and are all named `journal.jsonl`, so
+/// they share the filename-derived session id `journal`.
+#[test]
+#[serial]
+fn workflow_journals_sharing_a_filename_are_unchanged_on_second_push() {
+    let _env = ConfigEnv::new();
+    let claude = TempDir::new().unwrap();
+    let repo_projects = TempDir::new().unwrap();
+    let workflows = claude
+        .path()
+        .join("-home-user-myproj")
+        .join(PARENT_SESSION_ID)
+        .join("subagents")
+        .join("workflows");
+    for (workflow, label) in [
+        ("wf_03f64cd3-6a5", "slice 28"),
+        ("wf_18a134cc-860", "slice 29"),
+    ] {
+        fs::create_dir_all(workflows.join(workflow)).unwrap();
+        fs::write(
+            workflows.join(workflow).join("journal.jsonl"),
+            format!("{{\"type\":\"launched\"}}\n{{\"type\":\"started\",\"label\":\"{label}\"}}\n"),
+        )
+        .unwrap();
+    }
+    let filter = FilterConfig::default();
+
+    let sessions = discover_sessions(claude.path(), &filter).unwrap();
+    let plan1 = plan_push(&sessions, claude.path(), repo_projects.path(), &filter).unwrap();
+    assert_eq!(plan1.added, 2);
+    for entry in &plan1.entries {
+        let dest = repo_projects.path().join(&entry.relative_path);
+        sessions[entry.session_index].copy_to(&dest).unwrap();
+    }
+
+    let sessions2 = discover_sessions(claude.path(), &filter).unwrap();
+    let plan2 = plan_push(&sessions2, claude.path(), repo_projects.path(), &filter).unwrap();
+    assert_eq!(
+        plan2.modified, 0,
+        "identical journals must not be reported as modified"
+    );
+    assert_eq!(plan2.unchanged, 2);
+}
+
 #[test]
 #[serial]
 fn test_push_plan_detects_real_modification() {

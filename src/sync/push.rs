@@ -99,9 +99,10 @@ pub fn needs_copy(entry: &PlannedSessionPush, dest_path: &Path) -> bool {
 }
 
 /// Classify every discovered session against the sync repository's current
-/// contents without writing anything. Sessions are keyed by their identity
-/// (filename stem), so sibling files sharing an interior sessionId — subagent
-/// sidechains, resumed sessions — classify independently (issue #68).
+/// contents without writing anything. Sessions are keyed by their destination
+/// path, so files sharing an interior sessionId (subagent sidechains, resumed
+/// sessions, issue #68) or a filename stem (workflow `journal.jsonl`s)
+/// classify independently.
 pub fn plan_push(
     sessions: &[crate::parser::ConversationSession],
     claude_dir: &Path,
@@ -115,7 +116,7 @@ pub fn plan_push(
     };
     let existing_map: HashMap<_, _> = existing_sessions
         .iter()
-        .map(|s| (s.session_id.clone(), s))
+        .map(|s| (s.file_path.as_path(), s))
         .collect();
 
     let mut plan = PushPlan::default();
@@ -130,7 +131,8 @@ pub fn plan_push(
             }
         };
 
-        let operation = if let Some(existing) = existing_map.get(&session.session_id) {
+        let dest_path = projects_dir.join(&relative_path);
+        let operation = if let Some(existing) = existing_map.get(dest_path.as_path()) {
             if existing.content_hash() == session.content_hash() {
                 plan.unchanged += 1;
                 SyncOperation::Unchanged
