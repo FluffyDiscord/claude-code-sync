@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.12](https://github.com/FluffyDiscord/claude-code-sync/compare/v0.4.11...v0.4.12) (2026-10-14)
+
+
+### Bug Fixes
+
+* **push:** match repository files by path, not session id ([661e54c](https://github.com/FluffyDiscord/claude-code-sync/commit/661e54ccbe7cb94018a5fadc80119f802e66cd7c))
+
 ## [0.4.0](https://github.com/perfectra1n/claude-code-sync/compare/v0.3.3...v0.4.0) (2026-09-24)
 
 
