@@ -807,6 +807,22 @@ fn machine_bytes(
     Ok(bytes)
 }
 
+/// A local file's bytes in the spelling [`machine_bytes`] renders, so the two
+/// compare equal when they hold the same paths: Windows writes `C:\\Users\\me`,
+/// the rendering `C:/Users/me`.
+fn local_machine_bytes(
+    desc: &CategoryDescriptor,
+    tokens: &PathTokens,
+    local_path: &Path,
+) -> Result<Vec<u8>> {
+    let bytes =
+        fs::read(local_path).with_context(|| format!("Failed to read {}", local_path.display()))?;
+    if desc.tokenize_paths {
+        return Ok(tokens.to_machine(&tokens.to_repo(&bytes)));
+    }
+    Ok(bytes)
+}
+
 /// Remember, per artifact, the version this machine and the repo now agree on.
 /// A path they disagree on keeps the hash they last agreed on.
 pub fn record_synced_hashes(
@@ -858,7 +874,7 @@ fn read_agreed_hash(
         return Ok(None);
     }
 
-    let local_bytes = fs::read(local_path)?;
+    let local_bytes = local_machine_bytes(desc, tokens, local_path)?;
     let machine_repo_bytes = machine_bytes(desc, tokens, repo_path)?;
     let both_hold_it = local_bytes == machine_repo_bytes;
     Ok(both_hold_it.then(|| tracked::hash_content(&local_bytes)))
@@ -980,7 +996,7 @@ pub fn plan_pull(claude_dir: &Path, repo_root: &Path, filter: &FilterConfig) -> 
                         plan.creates.push(write);
                         continue;
                     }
-                    let local_bytes = fs::read(&local_path)?;
+                    let local_bytes = local_machine_bytes(desc, &plan.tokens, &local_path)?;
                     let machine_repo_bytes = machine_bytes(desc, &plan.tokens, &repo_path)?;
                     if local_bytes != machine_repo_bytes {
                         let repo_hash = tracked::hash_content(&machine_repo_bytes);

@@ -6,7 +6,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use claude_code_sync::artifacts::engine::{
-    apply_pull, plan_pull, push_artifacts, ArtifactChange, ArtifactChangeKind,
+    apply_pull, plan_pull, push_artifacts, record_synced_hashes, ArtifactChange, ArtifactChangeKind,
 };
 use claude_code_sync::artifacts::registry::{ArtifactToggles, CategoryId};
 use claude_code_sync::artifacts::tracked;
@@ -171,9 +171,10 @@ fn settings_paths_are_stored_neutrally_and_rendered_per_machine() {
     apply_pull(&plan, false).unwrap();
 
     let rendered = fs::read_to_string(machine_b.path().join("settings.json")).unwrap();
+    let rendered_claude_dir = machine_b.path().to_string_lossy().replace('\\', "/");
     assert_eq!(
         stop_hook_command(&rendered),
-        format!("{}/hooks/stop.sh", machine_b.path().display())
+        format!("{rendered_claude_dir}/hooks/stop.sh")
     );
 }
 
@@ -191,6 +192,27 @@ fn a_settings_file_that_only_differs_by_machine_path_is_not_rewritten() {
         plan.is_empty(),
         "tokenized settings must compare equal to their own machine rendering"
     );
+}
+
+#[test]
+fn a_remote_edit_to_settings_holding_this_machines_paths_is_taken_without_a_conflict() {
+    let repo = TempDir::new().unwrap();
+    let claude = TempDir::new().unwrap();
+    let hook = stop_hook_settings(&format!("{}/hooks/stop.sh", claude.path().display()));
+    fs::write(claude.path().join("settings.json"), &hook).unwrap();
+    push_artifacts(claude.path(), repo.path(), &all_on_filter()).unwrap();
+    record_synced_hashes(claude.path(), repo.path(), &all_on_filter()).unwrap();
+
+    let stored_path = repo.path().join("artifacts/settings/settings.json");
+    let mut stored: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&stored_path).unwrap()).unwrap();
+    stored["model"] = serde_json::json!("opus");
+    fs::write(&stored_path, stored.to_string()).unwrap();
+
+    let plan = plan_pull(claude.path(), repo.path(), &all_on_filter()).unwrap();
+
+    assert_eq!(plan.overwrites.len(), 1, "only the remote changed it");
+    assert!(plan.changed_on_both_sides.is_empty());
 }
 
 #[test]
