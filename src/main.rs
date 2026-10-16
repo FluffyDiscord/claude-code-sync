@@ -206,10 +206,11 @@ enum Commands {
         #[arg(long)]
         disable_artifacts: Option<String>,
 
-        /// Map a project to this machine's path, as id=/absolute/path
-        /// (repeatable). A mapped project syncs under its id, so it stays one
-        /// project across machines that keep it elsewhere.
-        #[arg(long, value_name = "ID=PATH")]
+        /// Map a project to this machine's path, as /absolute/path (id = its
+        /// folder name) or id=/absolute/path (repeatable). A mapped project
+        /// syncs under its id, so it stays one project across machines that
+        /// keep it elsewhere. An id already mapped elsewhere is refused.
+        #[arg(long, value_name = "[ID=]PATH")]
         map_project: Vec<String>,
 
         /// Remove a project mapping by id (repeatable)

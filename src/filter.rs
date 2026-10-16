@@ -322,21 +322,18 @@ fn glob_match(pattern: &str, text: &str) -> bool {
 }
 
 /// Add or remove `[project_map]` entries. `add` holds `id=/absolute/path`
-/// pairs; `remove` holds ids.
+/// pairs or bare paths; `remove` holds ids. Removals run first, so an id can
+/// be re-pointed in one command.
 pub fn update_project_map(add: &[String], remove: &[String]) -> Result<()> {
     let mut config = FilterConfig::load()?;
 
-    for entry in add {
-        let Some((id, path)) = entry.split_once('=') else {
-            bail!("expected id=/absolute/path, got {entry:?}");
-        };
-        let path = crate::project_map::normalize_project_path(Path::new(path.trim()));
-        config.project_map.insert(id.trim().to_string(), path);
-    }
     for id in remove {
         if config.project_map.remove(id.trim()).is_none() {
             println!("{}", format!("No mapping named {id:?}").yellow());
         }
+    }
+    for entry in add {
+        crate::project_map::add_mapping(&mut config.project_map, entry)?;
     }
 
     config.validate()?;

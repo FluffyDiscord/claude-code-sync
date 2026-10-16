@@ -178,8 +178,8 @@ loses renames and gives up whenever two checkouts share a name.
 Map the project once per machine instead:
 
 ```bash
-# on the Linux box
-claude-code-sync config --map-project app=/home/user/work/app
+# on the Linux box: the id defaults to the folder name, `app`
+claude-code-sync config --map-project /home/user/work/app
 
 # on the Mac, where the same project lives elsewhere and is named differently
 claude-code-sync config --map-project app=/Users/someone/src/app-renamed
@@ -194,6 +194,16 @@ they keep `use_project_name_only` or their encoded path, exactly as before. Ids
 are plain directory names, paths must be absolute and spelled exactly as the
 project's own path (a trailing slash encodes differently), and two ids pointing
 at one directory are refused.
+
+**An id that's already taken is refused.** Two checkouts named `app` → map the
+second one under its own id:
+
+```bash
+claude-code-sync config --map-project personal-app=/home/user/personal/app
+```
+
+To move an id to another path, unmap and map it in one command:
+`--unmap-project app --map-project app=/new/path`.
 
 A machine that has not mapped an id yet skips those files rather than writing
 them to a directory Claude Code would never read; run `--map-project` there and

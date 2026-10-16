@@ -65,6 +65,41 @@ pub fn validate(map: &ProjectMap) -> Result<()> {
     ensure_no_encoding_collisions(map)
 }
 
+/// Add one `id=/absolute/path` or bare `/absolute/path` entry; a bare path is
+/// mapped under its folder name. An id already mapped elsewhere is refused
+/// rather than silently re-pointed: the project it named would stop syncing.
+pub fn add_mapping(map: &mut ProjectMap, entry: &str) -> Result<()> {
+    let (explicit_id, raw_path) = match entry.split_once('=') {
+        Some((id, path)) if !id.contains('/') => (Some(id.trim()), path),
+        _ => (None, entry),
+    };
+    let path = normalize_project_path(Path::new(raw_path.trim()));
+    let id = match explicit_id {
+        Some(id) => id.to_string(),
+        None => {
+            let Some(folder_name) = path.file_name() else {
+                bail!(
+                    "{entry:?} has no folder name to use as an id; use --map-project <id>=<path>"
+                );
+            };
+            folder_name.to_string_lossy().into_owned()
+        }
+    };
+
+    if let Some(existing) = map.get(&id) {
+        if *existing != path {
+            bail!(
+                "project_map id {id:?} already maps to {}; pick another id: \
+                 --map-project <id>={}, or --unmap-project {id} first",
+                existing.display(),
+                path.display()
+            );
+        }
+    }
+    map.insert(id, path);
+    Ok(())
+}
+
 /// Reject a map in which two ids encode to one directory: their files would
 /// merge under both ids, and nothing could separate them afterwards.
 pub fn ensure_no_encoding_collisions(map: &ProjectMap) -> Result<()> {
@@ -491,6 +526,71 @@ mod tests {
 
         assert!(skipped_project_warnings(&nothing, false).is_empty());
         assert!(skipped_project_warnings(&nothing, true).is_empty());
+    }
+
+    #[test]
+    fn a_bare_path_is_mapped_under_its_folder_name() {
+        let mut map = ProjectMap::new();
+        add_mapping(&mut map, "/home/user/work/shop-web/").unwrap();
+        assert_eq!(
+            map.get("shop-web"),
+            Some(&PathBuf::from("/home/user/work/shop-web"))
+        );
+    }
+
+    #[test]
+    fn an_explicit_id_still_wins_over_the_folder_name() {
+        let mut map = ProjectMap::new();
+        add_mapping(&mut map, " shop = /home/user/work/shop-web").unwrap();
+        assert_eq!(
+            map.get("shop"),
+            Some(&PathBuf::from("/home/user/work/shop-web"))
+        );
+    }
+
+    #[test]
+    fn an_id_already_mapped_elsewhere_is_refused() {
+        let mut map = ProjectMap::new();
+        add_mapping(&mut map, "/home/user/work/app").unwrap();
+
+        let error = add_mapping(&mut map, "/home/user/personal/app").unwrap_err();
+
+        assert!(error.to_string().contains("pick another id"), "{error}");
+        assert_eq!(
+            map.get("app"),
+            Some(&PathBuf::from("/home/user/work/app")),
+            "the first mapping is kept"
+        );
+    }
+
+    #[test]
+    fn a_second_checkout_with_the_same_folder_name_takes_its_own_id() {
+        let mut map = ProjectMap::new();
+        add_mapping(&mut map, "/home/user/work/app").unwrap();
+        add_mapping(&mut map, "personal-app=/home/user/personal/app").unwrap();
+        assert_eq!(map.len(), 2);
+    }
+
+    #[test]
+    fn a_bare_path_containing_an_equals_sign_is_a_path() {
+        let mut map = ProjectMap::new();
+        add_mapping(&mut map, "/home/user/a=b").unwrap();
+        assert_eq!(map.get("a=b"), Some(&PathBuf::from("/home/user/a=b")));
+    }
+
+    #[test]
+    fn mapping_the_same_path_again_is_accepted() {
+        let mut map = ProjectMap::new();
+        add_mapping(&mut map, "/home/user/work/app").unwrap();
+        add_mapping(&mut map, "app=/home/user/work/app").unwrap();
+        assert_eq!(map.len(), 1);
+    }
+
+    #[test]
+    fn a_path_without_a_folder_name_needs_an_explicit_id() {
+        let mut map = ProjectMap::new();
+        let error = add_mapping(&mut map, "/").unwrap_err();
+        assert!(error.to_string().contains("no folder name"), "{error}");
     }
 
     #[test]
