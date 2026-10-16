@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.4.14](https://github.com/FluffyDiscord/claude-code-sync/compare/v0.4.13...v0.4.14) (2026-10-16)
+
+
+### Bug Fixes
+
+* **artifacts:** stop Windows settings with native paths conflicting on every pull ([cfa4be3](https://github.com/FluffyDiscord/claude-code-sync/commit/cfa4be3da083472b1d33aa2267641301aa71f2aa))
+* **deps:** clear the security audit, drop unmaintained crates, fix the Windows test ([0ab2a96](https://github.com/FluffyDiscord/claude-code-sync/commit/0ab2a967f3dbae7dca37683010f320358f059446))
+
 ## [0.4.13](https://github.com/FluffyDiscord/claude-code-sync/compare/v0.4.12...v0.4.13) (2026-10-16)
 
 
