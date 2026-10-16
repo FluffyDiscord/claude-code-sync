@@ -1,6 +1,7 @@
 use anyhow::{Context, Result};
 use colored::Colorize;
 use inquire::{Confirm, Select};
+use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
 
 use crate::conflict::{Conflict, ConflictResolution};
@@ -75,7 +76,7 @@ impl ResolutionResult {
 
 /// Check if we're running in an interactive terminal
 pub fn is_interactive() -> bool {
-    atty::is(atty::Stream::Stdin) && atty::is(atty::Stream::Stdout)
+    std::io::stdin().is_terminal() && std::io::stdout().is_terminal()
 }
 
 /// Ask `question` in a terminal (default no). Anywhere else only `assume_yes`

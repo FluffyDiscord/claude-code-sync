@@ -28,13 +28,14 @@ ignore = "0.4"
 # one core took 20 seconds over 12k of them.
 rayon = "1.11"
 colored = "3.1.1"
-dirs = "6.0.0"
+dirs = "7.0.0"
 uuid = { version = "1.23.3", features = ["v4", "serde"] }
-base64 = "0.22.1"
-inquire = "0.9.4"
+base64 = "0.23.1"
+# Without `fuzzy`: it pulls the archived fuzzy-matcher. Typing in a select
+# filters by substring instead.
+inquire = { version = "0.9.4", default-features = false, features = ["crossterm"] }
 log = "0.4.33"
 env_logger = "0.11.10"
-atty = "0.2.14"
 tempfile = "3.27.0"
 sha2 = "0.11.0"
 semver = "1.0.28"
@@ -56,8 +57,8 @@ zip = { version = "8.6.0", default-features = false, features = ["deflate-flate2
 [dev-dependencies]
 walkdir = "2.5"
 serde_json = "1.0.150"
-dirs = "6.0.0"
-serial_test = "3.5.0"
+dirs = "7.0.0"
+serial_test = "4.0.1"
 
 # Used by bin/release.sh for local cross-builds: optimized for size. `release`
 # stays untouched, so `cargo install` and the release artifacts CI publishes

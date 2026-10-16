@@ -76,16 +76,21 @@ fn a_remote_change_to_a_path_bearing_setting_arrives_rendered_for_this_machine()
     let repo = TempDir::new().unwrap();
     let a = TempDir::new().unwrap();
     let b = TempDir::new().unwrap();
-    let setting = |claude: &Path, model: &str| {
-        let hook = format!("{}/hooks/run.sh", claude.display());
+    let setting = |claude_dir: &str, model: &str| {
+        let hook = format!("{claude_dir}/hooks/run.sh");
         serde_json::json!({ "model": model, "hook": hook }).to_string()
     };
-    write(&a.path().join("settings.json"), &setting(a.path(), "opus"));
+    let native = |claude: &Path| claude.display().to_string();
+    let rendered = |claude: &Path| claude.to_string_lossy().replace('\\', "/");
+    write(
+        &a.path().join("settings.json"),
+        &setting(&native(a.path()), "opus"),
+    );
     push(a.path(), repo.path());
     pull(b.path(), repo.path());
     write(
         &a.path().join("settings.json"),
-        &setting(a.path(), "sonnet"),
+        &setting(&native(a.path()), "sonnet"),
     );
     push(a.path(), repo.path());
 
@@ -98,7 +103,7 @@ fn a_remote_change_to_a_path_bearing_setting_arrives_rendered_for_this_machine()
 
     assert_eq!(
         read(&b.path().join("settings.json")),
-        setting(b.path(), "sonnet")
+        setting(&rendered(b.path()), "sonnet")
     );
 }
 
