@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.13](https://github.com/FluffyDiscord/claude-code-sync/compare/v0.4.12...v0.4.13) (2026-10-16)
+
+
+### Features
+
+* **project-map:** default the --map-project id to the folder name, refuse taken ids ([6a597c8](https://github.com/FluffyDiscord/claude-code-sync/commit/6a597c86950022929605ec3561b08ebc393572eb))
+
 ## [0.4.0](https://github.com/perfectra1n/claude-code-sync/compare/v0.3.3...v0.4.0) (2026-09-24)
 
 
