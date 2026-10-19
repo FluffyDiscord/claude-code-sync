@@ -7,10 +7,8 @@ fn main() {
     println!("Repository: {}", repo_path);
     println!();
 
-    // Open repository
     let repo = Repository::open(repo_path).expect("Failed to open repo");
 
-    // Test 1: Default statuses (what current code does)
     println!("=== Test 1: Default statuses (current implementation) ===");
     let statuses = repo.statuses(None).expect("Failed to get statuses");
     println!("Total status entries: {}", statuses.len());
@@ -30,7 +28,6 @@ fn main() {
     }
     println!();
 
-    // Test 2: Exclude untracked and ignored (what we should do)
     println!("=== Test 2: Exclude untracked and ignored files ===");
     let mut opts = git2::StatusOptions::new();
     opts.include_untracked(false);
@@ -54,7 +51,6 @@ fn main() {
     }
     println!();
 
-    // Test 3: Only show index and workdir modifications
     println!("=== Test 3: Only tracked file modifications ===");
     let mut opts3 = git2::StatusOptions::new();
     opts3.include_untracked(false);
