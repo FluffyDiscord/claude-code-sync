@@ -12,15 +12,8 @@ const BIN_NAME: &str = if cfg!(windows) {
     "claude-code-sync"
 };
 
-/// Largest download accepted. The release archives are a few MB; this only
-/// guards against an unbounded read if a URL ever serves something else.
 const MAX_DOWNLOAD_BYTES: u64 = 200 * 1024 * 1024;
 
-/// The release asset built for the platform this binary was compiled for,
-/// mirroring the matrix in `.github/workflows/build.yml`.
-///
-/// Keyed on the compile target rather than the running OS, so a musl build
-/// updates to musl and an x86_64 build running under emulation stays x86_64.
 fn release_asset() -> Option<&'static str> {
     let asset = match (
         std::env::consts::OS,
@@ -49,7 +42,6 @@ fn get_cargo_install_command() -> String {
     format!("cargo install --locked --git {REPO_URL}")
 }
 
-/// Normalise a user-supplied version to a release tag: `0.3.3` -> `v0.3.3`.
 fn normalize_tag(version: &str) -> String {
     let version = version.trim();
     if version.starts_with('v') {
@@ -59,21 +51,17 @@ fn normalize_tag(version: &str) -> String {
     }
 }
 
-/// Parse the version out of a release tag, accepting a leading `v`.
 fn parse_tag(tag: &str) -> Result<Version> {
     Version::parse(tag.trim_start_matches('v'))
         .with_context(|| format!("'{tag}' is not a valid release version"))
 }
 
-/// Extract the tag from the `Location` of a `/releases/latest` redirect,
-/// e.g. `.../releases/tag/v0.3.3` -> `v0.3.3`.
 fn tag_from_location(location: &str) -> Option<&str> {
     let (_, tag) = location.rsplit_once("/releases/tag/")?;
     let tag = tag.trim_end_matches('/');
     (!tag.is_empty() && !tag.contains('/')).then_some(tag)
 }
 
-/// The expected hash from a `<asset>.sha256` file (`<hex>  <filename>`).
 fn parse_checksum(contents: &str) -> Option<String> {
     let hash = contents.split_whitespace().next()?.to_ascii_lowercase();
     (hash.len() == 64 && hash.bytes().all(|b| b.is_ascii_hexdigit())).then_some(hash)
@@ -100,11 +88,6 @@ fn agent(follow_redirects: bool) -> ureq::Agent {
     config.build().new_agent()
 }
 
-/// Resolve the newest release tag.
-///
-/// Reads the redirect GitHub serves for `/releases/latest` instead of calling
-/// the REST API, whose unauthenticated limit (60/hour, shared per IP) is easy
-/// to exhaust behind a NAT or on CI.
 fn latest_tag() -> Result<String> {
     let url = format!("{REPO_URL}/releases/latest");
     let response = agent(false)
@@ -138,7 +121,6 @@ fn download(url: &str) -> Result<Vec<u8>> {
         .with_context(|| format!("failed to read {url}"))
 }
 
-/// Pull the binary out of a release archive.
 #[cfg(not(windows))]
 fn extract_binary(archive: &[u8]) -> Result<Vec<u8>> {
     let mut tar = tar::Archive::new(flate2::read::GzDecoder::new(archive));
@@ -156,7 +138,6 @@ fn extract_binary(archive: &[u8]) -> Result<Vec<u8>> {
     bail!("release archive does not contain {BIN_NAME}")
 }
 
-/// Pull the binary out of a release archive.
 #[cfg(windows)]
 fn extract_binary(archive: &[u8]) -> Result<Vec<u8>> {
     let mut zip = zip::ZipArchive::new(std::io::Cursor::new(archive))
@@ -169,7 +150,6 @@ fn extract_binary(archive: &[u8]) -> Result<Vec<u8>> {
     Ok(bytes)
 }
 
-/// Swap the running executable for `binary`.
 fn install_binary(binary: &[u8]) -> Result<()> {
     let mut staged = tempfile::NamedTempFile::new().context("failed to create a temp file")?;
     std::io::Write::write_all(&mut staged, binary)?;
@@ -178,19 +158,12 @@ fn install_binary(binary: &[u8]) -> Result<()> {
         use std::os::unix::fs::PermissionsExt;
         std::fs::set_permissions(staged.path(), std::fs::Permissions::from_mode(0o755))?;
     }
-    // self_replace handles the platform quirks: an atomic rename on Unix, and
-    // on Windows moving the locked, running .exe aside before writing the new one.
     self_replace::self_replace(staged.path()).context(
         "failed to replace the running binary (is its directory writable? a system \
          path may need sudo)",
     )
 }
 
-/// Update this binary to the latest release, or to `target` if given.
-///
-/// With `check_only`, report whether an update is available and change
-/// nothing. `force` reinstalls even when already current, and overrides the
-/// refusal to touch a binary `cargo install` put in place.
 pub fn self_update(
     check_only: bool,
     target: Option<&str>,
@@ -319,7 +292,6 @@ mod tests {
             tag_from_location("https://github.com/o/r/releases/tag/v1.2.0/"),
             Some("v1.2.0")
         );
-        // No releases yet: GitHub redirects to the releases index instead.
         assert_eq!(tag_from_location("https://github.com/o/r/releases"), None);
         assert_eq!(
             tag_from_location("https://github.com/o/r/releases/tag/"),
@@ -364,8 +336,6 @@ mod tests {
 
     #[test]
     fn this_platform_has_a_release_asset() {
-        // Every platform CI builds on ships a release asset; a new CI runner
-        // OS without one should fail here rather than at update time.
         assert!(release_asset().is_some());
     }
 

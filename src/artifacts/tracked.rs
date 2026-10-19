@@ -1,27 +1,12 @@
-//! The artifact paths this machine last synced, per sync repository.
-//!
-//! Without such a record, a deletion is indistinguishable from a file the
-//! machine never had. With it, one rule covers both directions: a path this
-//! machine received before and no longer has is a deletion, and is removed
-//! from the other side.
-//!
-//! The record is per machine and never enters the repository. An absent or
-//! unreadable record reads as empty, which propagates no deletions at all.
-
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
-/// Repo-relative artifact paths, sorted.
 pub type TrackedPaths = BTreeSet<String>;
 
-/// Per repo-relative artifact path, the hash of the file as this machine holds
-/// it, taken when this machine and the repo last held the same version: the
-/// base that tells a local edit from a remote one.
 pub type SyncedHashes = BTreeMap<String, String>;
 
-/// File name under `~/.claude` holding the record for every sync repository.
 const TRACKED_FILE_NAME: &str = ".claude-code-sync-tracked.json";
 
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -32,7 +17,6 @@ struct TrackedRecord {
     synced_hashes: BTreeMap<String, SyncedHashes>,
 }
 
-/// Where the record lives for a given Claude directory.
 pub fn record_path(claude_dir: &Path) -> PathBuf {
     claude_dir.join(TRACKED_FILE_NAME)
 }
@@ -48,7 +32,6 @@ fn repo_key(repo_root: &Path) -> String {
     repo_root.to_string_lossy().to_string()
 }
 
-/// The paths this machine last synced with `repo_root`.
 pub fn load(claude_dir: &Path, repo_root: &Path) -> TrackedPaths {
     read_record(claude_dir)
         .repos
@@ -56,12 +39,6 @@ pub fn load(claude_dir: &Path, repo_root: &Path) -> TrackedPaths {
         .unwrap_or_default()
 }
 
-/// Forget everything this machine recorded about `repo_root`.
-///
-/// Used when the repository is rewound under this machine's feet (`undo push`):
-/// the record would claim paths the repo no longer has, and the next pull would
-/// read that as a deletion. Forgetting restores the fresh-machine state, which
-/// deletes nothing and re-learns on the next sync.
 pub fn forget(claude_dir: &Path, repo_root: &Path) -> Result<()> {
     let mut record = read_record(claude_dir);
     let key = repo_key(repo_root);
@@ -73,14 +50,12 @@ pub fn forget(claude_dir: &Path, repo_root: &Path) -> Result<()> {
     write_record(claude_dir, &record)
 }
 
-/// Record the paths this machine now holds in common with `repo_root`.
 pub fn save(claude_dir: &Path, repo_root: &Path, paths: TrackedPaths) -> Result<()> {
     let mut record = read_record(claude_dir);
     record.repos.insert(repo_key(repo_root), paths);
     write_record(claude_dir, &record)
 }
 
-/// The versions this machine last agreed on with `repo_root`.
 pub fn load_synced_hashes(claude_dir: &Path, repo_root: &Path) -> SyncedHashes {
     read_record(claude_dir)
         .synced_hashes
@@ -88,14 +63,12 @@ pub fn load_synced_hashes(claude_dir: &Path, repo_root: &Path) -> SyncedHashes {
         .unwrap_or_default()
 }
 
-/// Record the versions this machine now agrees on with `repo_root`.
 pub fn save_synced_hashes(claude_dir: &Path, repo_root: &Path, hashes: SyncedHashes) -> Result<()> {
     let mut record = read_record(claude_dir);
     record.synced_hashes.insert(repo_key(repo_root), hashes);
     write_record(claude_dir, &record)
 }
 
-/// The stable fingerprint stored in [`SyncedHashes`].
 pub fn hash_content(bytes: &[u8]) -> String {
     crate::self_update::sha256_hex(bytes)
 }

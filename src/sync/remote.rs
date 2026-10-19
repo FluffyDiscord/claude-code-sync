@@ -5,7 +5,6 @@ use crate::git::GitRepo;
 
 use super::state::SyncState;
 
-/// Show current remote configuration
 pub fn show_remote() -> Result<()> {
     let state = SyncState::load()?;
     let repo = GitRepo::open(&state.sync_repo_path)?;
@@ -13,21 +12,18 @@ pub fn show_remote() -> Result<()> {
     println!("{}", "=== Git Remote Configuration ===".bold().cyan());
     println!();
 
-    // Show sync repository directory
     println!(
         "{} {}",
         "Sync Directory:".bold(),
         state.sync_repo_path.display().to_string().cyan()
     );
 
-    // Show current branch
     if let Ok(branch) = repo.current_branch() {
         println!("{} {}", "Current Branch:".bold(), branch.cyan());
     }
 
     println!();
 
-    // List all remotes
     let remotes = repo.list_remotes()?;
 
     if remotes.is_empty() {
@@ -54,12 +50,10 @@ pub fn show_remote() -> Result<()> {
     Ok(())
 }
 
-/// Set or update remote URL
 pub fn set_remote(name: &str, url: &str) -> Result<()> {
     let state = SyncState::load()?;
     let repo = GitRepo::open(&state.sync_repo_path)?;
 
-    // Validate URL format
     if !url.starts_with("http://")
         && !url.starts_with("https://")
         && !url.starts_with("git@")
@@ -76,11 +70,9 @@ pub fn set_remote(name: &str, url: &str) -> Result<()> {
         ));
     }
 
-    // Check if remote exists
     let remote_exists = repo.has_remote(name);
 
     if remote_exists {
-        // Update existing remote
         repo.set_remote_url(name, url)
             .with_context(|| format!("Failed to update remote '{name}' URL"))?;
 
@@ -91,7 +83,6 @@ pub fn set_remote(name: &str, url: &str) -> Result<()> {
             url
         );
     } else {
-        // Create new remote
         repo.add_remote(name, url)
             .with_context(|| format!("Failed to create remote '{name}'"))?;
 
@@ -103,7 +94,6 @@ pub fn set_remote(name: &str, url: &str) -> Result<()> {
         );
     }
 
-    // Update state if this is the origin remote
     if name == "origin" {
         let mut state = state;
         state.has_remote = true;
@@ -115,23 +105,19 @@ pub fn set_remote(name: &str, url: &str) -> Result<()> {
     Ok(())
 }
 
-/// Remove a remote
 pub fn remove_remote(name: &str) -> Result<()> {
     let state = SyncState::load()?;
     let repo = GitRepo::open(&state.sync_repo_path)?;
 
-    // Check if remote exists
     if !repo.has_remote(name) {
         return Err(anyhow!("Remote '{name}' not found"));
     }
 
-    // Remove the remote
     repo.remove_remote(name)
         .with_context(|| format!("Failed to remove remote '{name}'"))?;
 
     println!("{} Removed remote '{}'", "✓".green().bold(), name.cyan());
 
-    // Update state if this was the origin remote
     if name == "origin" {
         let mut state = state;
         state.has_remote = false;

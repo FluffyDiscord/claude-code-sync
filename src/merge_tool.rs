@@ -1,16 +1,3 @@
-//! External three-way merge for a differing file.
-//!
-//! The terminal picker can only choose a side. When `merge_tool` is configured,
-//! the prompt gains "merge in the editor": the tool runs as
-//! `<merge_tool> <local> <remote> <base> <output>` (the JetBrains argument
-//! order) and whatever it writes to the output pane is what lands.
-//!
-//! A tool that keeps its window open until the merge is done (meld, kdiff3,
-//! vimdiff) is waited for, and its exit code decides whether the output pane
-//! applies. Editor launchers instead hand the request to an already-running
-//! process and exit successfully before the window is drawn; for those the
-//! output file being rewritten and then settling is what completion means.
-
 use anyhow::{Context, Result};
 use inquire::Select;
 use std::path::{Path, PathBuf};
@@ -19,12 +6,9 @@ use std::time::{Duration, Instant};
 
 use crate::git::{ConflictChoice, ConflictedFile};
 
-/// How a merge window ended.
 #[derive(Debug, PartialEq, Eq)]
 pub enum Resolution {
-    /// The tool wrote the merged file.
     Written(Vec<u8>),
-    /// The window closed without applying anything, or the wait ran out.
     Abandoned,
 }
 
@@ -33,8 +17,6 @@ const KEEP_LOCAL: &str = "local";
 const MERGE_EXTERNALLY: &str = "merge";
 const STOP_THE_PULL: &str = "stop";
 
-/// Ask what to do about one differing file, returning the bytes to write, or
-/// `None` to keep the local file untouched.
 pub fn resolve_overwrite(
     merge_tool: &str,
     prefer_merge_tool: bool,
@@ -72,7 +54,6 @@ pub fn resolve_overwrite(
     }
 }
 
-/// Ask which version of a file both machines changed the sync repository keeps.
 pub fn resolve_conflict(
     merge_tool: &str,
     prefer_merge_tool: bool,
@@ -143,8 +124,6 @@ fn ask(
         .unwrap_or(fallback)
 }
 
-/// Run the configured tool on the local and remote versions of `path`, with
-/// `base_bytes` as the version both started from.
 pub fn merge(
     merge_tool: &str,
     path: &Path,
@@ -204,20 +183,13 @@ pub fn merge(
         let saved = current != local_bytes || read_modified_time(&output) != output_written_at;
 
         if handed_off {
-            // Nothing left to wait on but the file: the editor that owns the
-            // merge is another process. Saved and then settled is done.
             if saved && current == previous {
                 break Resolution::Written(current);
             }
         } else {
             match child.try_wait().ok().flatten() {
-                // A tool that owns its window (meld, kdiff3, vimdiff) is done
-                // when it exits, not at its first save: the user may save
-                // partway through a merge. Its exit code says whether to apply.
                 None => {}
                 Some(status) if status.success() && started.elapsed() <= handoff_grace => {
-                    // Or a launcher that handed the request to an already
-                    // running editor and exited straight away.
                     handed_off = true;
                     println!(
                         "  Waiting for the merge of '{}'. Save the merged file to continue \
@@ -246,8 +218,6 @@ pub fn merge(
         }
     };
 
-    // The launcher usually exited long ago; reap it, and make sure a tool still
-    // running for a merge nobody waits for does not outlive this command.
     if matches!(child.try_wait(), Ok(None)) {
         let _ = child.kill();
     }
@@ -262,7 +232,6 @@ fn read_modified_time(path: &Path) -> Option<std::time::SystemTime> {
         .ok()
 }
 
-/// A wait spelled the way a person reads it.
 fn describe(timeout: Duration) -> String {
     let seconds = timeout.as_secs();
     if seconds < 60 {
@@ -271,8 +240,6 @@ fn describe(timeout: Duration) -> String {
     format!("{} minutes", seconds / 60)
 }
 
-/// How long to wait for a merge window, overridable per machine with
-/// `CLAUDE_CODE_SYNC_MERGE_TIMEOUT_SECONDS`.
 fn configured_timeout() -> Duration {
     let seconds = std::env::var("CLAUDE_CODE_SYNC_MERGE_TIMEOUT_SECONDS")
         .ok()
@@ -292,8 +259,6 @@ mod tests {
         (dir, path)
     }
 
-    /// A stand-in merge tool: `<local> <remote> <base> <output>`, writing the
-    /// remote pane into the output pane.
     #[cfg(unix)]
     fn tool_that_takes_the_remote_side(dir: &Path) -> String {
         use std::os::unix::fs::PermissionsExt;
@@ -436,8 +401,6 @@ mod tests {
         assert_eq!(std::fs::read(&path).unwrap(), b"local side\n".to_vec());
     }
 
-    /// A stand-in for a tool that owns its window: saves a partial merge,
-    /// keeps going, then saves the final one and exits.
     #[cfg(unix)]
     fn tool_that_saves_twice(dir: &Path) -> String {
         use std::os::unix::fs::PermissionsExt;

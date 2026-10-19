@@ -9,8 +9,6 @@ struct Timestamp<'a> {
     milliseconds: i64,
 }
 
-/// The two versions with every date-time that differs set to the later one,
-/// or `None` when they differ in anything else.
 pub fn keep_later_timestamps(local: &[u8], remote: &[u8]) -> Option<Vec<u8>> {
     let local = std::str::from_utf8(local).ok()?;
     let remote = std::str::from_utf8(remote).ok()?;

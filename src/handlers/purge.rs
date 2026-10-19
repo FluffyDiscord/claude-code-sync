@@ -1,6 +1,3 @@
-//! `claude-code-sync purge`: delete transcripts past the retention window from
-//! the machine and the sync repository together.
-
 use anyhow::{bail, Result};
 use colored::Colorize;
 use std::path::Path;
@@ -9,11 +6,6 @@ use crate::filter::FilterConfig;
 use crate::purge::{self, PurgePlan, PurgeReport};
 use crate::sync::{discovery::claude_projects_dir, SyncState};
 
-/// Run a purge the user asked for.
-///
-/// Nothing is deleted until the plan has been shown: `dry_run` stops there, a
-/// terminal asks for confirmation, and anywhere else `--yes` is required, so a
-/// script cannot delete transcripts by accident.
 pub fn handle_purge(older_than_days: Option<u32>, dry_run: bool, assume_yes: bool) -> Result<()> {
     let state = SyncState::load()?;
     let filter = FilterConfig::load()?;
@@ -37,8 +29,6 @@ pub fn handle_purge(older_than_days: Option<u32>, dry_run: bool, assume_yes: boo
         return Ok(());
     }
 
-    // Opened and checked before anything is deleted: a repository that cannot
-    // record the removal must stop the purge while every file still exists.
     let repo = purge::open_sync_repo(&state.sync_repo_path)?;
     purge::ensure_nothing_uncommitted(&repo)?;
 
@@ -49,9 +39,6 @@ pub fn handle_purge(older_than_days: Option<u32>, dry_run: bool, assume_yes: boo
     Ok(())
 }
 
-/// Purge as part of a sync, when the user has turned that on. There is no
-/// prompt — enabling `purge_after_sync` is the consent — and the removals are
-/// left staged for the push that follows.
 pub fn purge_after_sync(filter: &FilterConfig, repo_root: &Path) -> Result<()> {
     if !filter.purge_after_sync {
         return Ok(());
@@ -170,8 +157,6 @@ fn report_outcome(report: &PurgeReport, committed: bool) {
     }
 }
 
-/// `--older-than` may lengthen the retention window, never shorten it below
-/// [`purge::MINIMUM_RETENTION_DAYS`].
 pub fn validate_older_than(days: Option<u32>) -> Result<()> {
     if let Some(days) = days {
         if days < purge::MINIMUM_RETENTION_DAYS {

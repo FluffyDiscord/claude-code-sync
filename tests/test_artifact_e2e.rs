@@ -1,10 +1,3 @@
-//! Full-pipeline end-to-end tests for artifact sync: the real push_history /
-//! pull_history / sync_bidirectional / undo_pull entry points, real git
-//! commits, and two simulated machines (distinct CLAUDE_CODE_SYNC_CLAUDE_DIR +
-//! CLAUDE_CODE_SYNC_CONFIG_DIR sharing one sync repository).
-//!
-//! Serialized: HOME and the config-dir override are process-global.
-
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -18,8 +11,6 @@ use claude_code_sync::VerbosityLevel;
 use serial_test::serial;
 use tempfile::TempDir;
 
-/// One simulated machine: its own HOME and tool-config dir, pointed at a
-/// shared sync repository. `activate()` switches the process env to it.
 struct Machine {
     _root: TempDir,
     home: PathBuf,
@@ -64,8 +55,6 @@ impl Machine {
 
     fn activate(&self) {
         std::env::set_var("HOME", &self.home);
-        // HOME alone is not enough on Windows (dirs::home_dir() ignores it
-        // there), so point the product at this machine's .claude explicitly.
         std::env::set_var("CLAUDE_CODE_SYNC_CLAUDE_DIR", self.home.join(".claude"));
         std::env::set_var("CLAUDE_CODE_SYNC_CONFIG_DIR", &self.config);
     }
@@ -162,7 +151,6 @@ fn test_full_pipeline_push_pull_undo_across_two_machines() {
     let repo = TempDir::new().unwrap();
     init_git_repo(repo.path());
 
-    // ---- Machine A pushes its whole environment ----
     let machine_a = Machine::new(repo.path());
     machine_a.activate();
     seed_full_claude_home(&machine_a.claude());
@@ -179,7 +167,6 @@ fn test_full_pipeline_push_pull_undo_across_two_machines() {
     assert_eq!(report.added, 1, "one session pushed");
     assert!(report.artifacts.total_added() >= 6, "artifacts pushed");
 
-    // One commit contains sessions, artifacts, and the ignore guard.
     let log = git(repo.path(), &["log", "--oneline"]);
     assert_eq!(log.lines().count(), 1, "single commit: {log}");
     let tracked = git(repo.path(), &["ls-files"]);
@@ -192,12 +179,10 @@ fn test_full_pipeline_push_pull_undo_across_two_machines() {
         "secrets never reach the repo: {tracked}"
     );
 
-    // The push record carries per-category artifact counts.
     let history = OperationHistory::load().unwrap();
     let last = history.get_last_operation_by_type(claude_code_sync::history::OperationType::Push);
     assert!(!last.unwrap().artifact_counts.is_empty());
 
-    // ---- Machine B pulls the environment onto a fresh home ----
     let machine_b = Machine::new(repo.path());
     machine_b.activate();
 
@@ -216,7 +201,6 @@ fn test_full_pipeline_push_pull_undo_across_two_machines() {
     assert!(b.join("history.jsonl").is_file());
     assert!(!b.join(".credentials.json").exists());
 
-    // ---- Undo the pull: every artifact the pull created disappears ----
     let summary = claude_code_sync::undo::undo_pull(None, Some(&machine_b.home)).unwrap();
     assert!(summary.contains("undone"), "undo summary: {summary}");
     assert!(
@@ -226,7 +210,6 @@ fn test_full_pipeline_push_pull_undo_across_two_machines() {
     assert!(!b.join("skills/deploy/SKILL.md").exists());
     assert!(!b.join("CLAUDE.md").exists());
 
-    // ---- Pull again: environment restored once more ----
     pull_history(false, None, false, VerbosityLevel::Quiet).unwrap();
     assert!(b.join("settings.json").is_file());
 }
@@ -261,8 +244,6 @@ fn test_full_pipeline_second_push_creates_no_commit() {
     )
     .unwrap();
 
-    // Issue #68 end-to-end: nothing changed, nothing is added/modified,
-    // and git records no second commit.
     assert_eq!(report.added, 0);
     assert_eq!(report.modified, 0);
     assert_eq!(report.artifacts.total_added(), 0);
@@ -278,13 +259,11 @@ fn test_full_pipeline_sync_converges_prompt_history() {
     let repo = TempDir::new().unwrap();
     init_git_repo(repo.path());
 
-    // Machine A seeds and pushes.
     let machine_a = Machine::new(repo.path());
     machine_a.activate();
     seed_full_claude_home(&machine_a.claude());
     push_history(Some("A"), false, None, false, false, VerbosityLevel::Quiet).unwrap();
 
-    // Machine B has its own prompt history and runs a bidirectional sync.
     let machine_b = Machine::new(repo.path());
     machine_b.activate();
     fs::write(
@@ -294,7 +273,6 @@ fn test_full_pipeline_sync_converges_prompt_history() {
     .unwrap();
     sync_bidirectional(Some("B sync"), None, false, false, VerbosityLevel::Quiet).unwrap();
 
-    // Machine A pulls; both machines now hold the identical superset.
     machine_a.activate();
     pull_history(false, None, false, VerbosityLevel::Quiet).unwrap();
 
@@ -410,8 +388,6 @@ fn test_pull_takes_what_only_the_remote_changed_and_the_later_dates() {
     );
 }
 
-/// Collects what the tool warns about, so a test can count the lines a pull
-/// prints rather than trust that it prints the right number.
 struct WarningCollector;
 
 static WARNINGS: Mutex<Vec<String>> = Mutex::new(Vec::new());
@@ -457,7 +433,6 @@ fn test_pull_warns_once_for_a_project_this_machine_never_mapped() {
     let repo = TempDir::new().unwrap();
     init_git_repo(repo.path());
 
-    // Machine A syncs its project under the canonical id "webapp".
     let machine_a = Machine::new(repo.path());
     machine_a.activate();
     seed_full_claude_home(&machine_a.claude());
@@ -465,16 +440,13 @@ fn test_pull_warns_once_for_a_project_this_machine_never_mapped() {
         sync_artifacts: ArtifactToggles::all_enabled(),
         ..Default::default()
     };
-    mapped.project_map.insert(
-        "webapp".to_string(),
-        PathBuf::from("/home/user/webapp"), // what -home-user-webapp encodes
-    );
+    mapped
+        .project_map
+        .insert("webapp".to_string(), PathBuf::from("/home/user/webapp"));
     machine_a.write_filter(&mapped);
     push_history(Some("A"), false, None, false, false, VerbosityLevel::Quiet).unwrap();
     assert!(repo.path().join("projects/webapp").is_dir());
 
-    // Machine B has never mapped "webapp": one transcript, one attachment and
-    // one memory index all land in the same warning.
     let machine_b = Machine::new(repo.path());
     machine_b.activate();
     reset_collected_warnings();
@@ -497,7 +469,6 @@ fn test_pull_warns_once_for_a_project_this_machine_never_mapped() {
         "nothing is written into a project this machine has no directory for"
     );
 
-    // With the config key on, every file gets its line back.
     let mut warn_each = mapped.clone();
     warn_each.project_map.clear();
     warn_each.warn_each_skipped_file = true;

@@ -1,11 +1,3 @@
-//! Canonical project identity: an `id -> absolute path` table, configured per
-//! machine, so one project syncs under one name when home directories, user
-//! names or checkout paths differ.
-//!
-//! Resolution order in both directions: the map, then `use_project_name_only`,
-//! then the encoded directory name. The map comes first because it survives a
-//! rename and stays unambiguous when two checkouts share a folder name.
-
 use anyhow::{bail, Result};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -13,14 +5,8 @@ use std::path::{Path, PathBuf};
 use crate::filter::FilterConfig;
 use crate::sync::discovery::{extract_project_name, find_local_project_by_name};
 
-/// Canonical id -> absolute project path, as configured per machine.
 pub type ProjectMap = BTreeMap<String, PathBuf>;
 
-/// Encode a project path the way Claude Code names `~/.claude/projects/<dir>`.
-///
-/// Claude Code derives the directory with a JavaScript regex, which runs over
-/// UTF-16 code units. A byte-wise version emits a different name for any
-/// non-ASCII path, and files then land in a directory Claude Code never reads.
 pub fn encode_project_path(path: &Path) -> String {
     path.to_string_lossy()
         .encode_utf16()
@@ -31,15 +17,10 @@ pub fn encode_project_path(path: &Path) -> String {
         .collect()
 }
 
-/// The spelling that encodes to the directory Claude Code created: no trailing
-/// separator, no `.` components.
 pub fn normalize_project_path(path: &Path) -> PathBuf {
     path.components().collect()
 }
 
-/// Reject a map that cannot be applied: an id becomes a directory name in the
-/// sync repository, a path must be absolute, and a path spelled differently
-/// from the project's own (a trailing slash) encodes to a different directory.
 pub fn validate(map: &ProjectMap) -> Result<()> {
     for (id, path) in map {
         if id.is_empty() || id.contains('/') || id.contains('\\') || id == "." || id == ".." {
@@ -51,8 +32,6 @@ pub fn validate(map: &ProjectMap) -> Result<()> {
                 path.display()
             );
         }
-        // Compared as text: `Path` equality ignores a trailing separator,
-        // `encode_project_path` turns it into another dash.
         if normalize_project_path(path).to_string_lossy() != path.to_string_lossy() {
             bail!(
                 "project_map entry {id:?} must be written exactly as the project's path, got {} \
@@ -65,9 +44,6 @@ pub fn validate(map: &ProjectMap) -> Result<()> {
     ensure_no_encoding_collisions(map)
 }
 
-/// Add one `id=/absolute/path` or bare `/absolute/path` entry; a bare path is
-/// mapped under its folder name. An id already mapped elsewhere is refused
-/// rather than silently re-pointed: the project it named would stop syncing.
 pub fn add_mapping(map: &mut ProjectMap, entry: &str) -> Result<()> {
     let (explicit_id, raw_path) = match entry.split_once('=') {
         Some((id, path)) if !id.contains('/') => (Some(id.trim()), path),
@@ -100,8 +76,6 @@ pub fn add_mapping(map: &mut ProjectMap, entry: &str) -> Result<()> {
     Ok(())
 }
 
-/// Reject a map in which two ids encode to one directory: their files would
-/// merge under both ids, and nothing could separate them afterwards.
 pub fn ensure_no_encoding_collisions(map: &ProjectMap) -> Result<()> {
     let mut seen: BTreeMap<String, &String> = BTreeMap::new();
     for (id, path) in map {
@@ -113,16 +87,12 @@ pub fn ensure_no_encoding_collisions(map: &ProjectMap) -> Result<()> {
     Ok(())
 }
 
-/// The canonical id of a local encoded project directory, when one is mapped.
 pub fn canonical_id(map: &ProjectMap, encoded_dir: &str) -> Option<String> {
     map.iter()
         .find(|(_, path)| encode_project_path(path) == encoded_dir)
         .map(|(id, _)| id.clone())
 }
 
-/// Whether a project directory, local (encoded) or in the sync repo (id or
-/// encoded), takes part in sync on this machine: every one does, unless
-/// `mapped_projects_only` limits sync to the map.
 pub fn is_synced(filter: &FilterConfig, project_dir_name: &str) -> bool {
     if !filter.mapped_projects_only {
         return true;
@@ -134,8 +104,6 @@ pub fn is_synced(filter: &FilterConfig, project_dir_name: &str) -> bool {
     canonical_id(&filter.project_map, project_dir_name).is_some()
 }
 
-/// [`is_synced`] for a file, given its path relative to a projects directory.
-/// A file beside the project directories belongs to no project.
 pub fn is_synced_path(filter: &FilterConfig, relative: &Path) -> bool {
     if !filter.mapped_projects_only {
         return true;
@@ -146,7 +114,6 @@ pub fn is_synced_path(filter: &FilterConfig, relative: &Path) -> bool {
     }
 }
 
-/// The directory name a local encoded project directory takes in the sync repo.
 pub fn repo_dir_name(filter: &FilterConfig, encoded_dir: &str) -> String {
     if let Some(id) = canonical_id(&filter.project_map, encoded_dir) {
         return id;
@@ -157,12 +124,6 @@ pub fn repo_dir_name(filter: &FilterConfig, encoded_dir: &str) -> String {
     encoded_dir.to_string()
 }
 
-/// [`repo_dir_name`] for a project directory under `projects_dir`. In
-/// `use_project_name_only` mode the name comes from the working directory a
-/// transcript in it records, the same name its sessions are pushed under:
-/// the encoded directory alone cannot tell `shop-web` from `shop/web`, and
-/// its last dash-separated piece would file this project's memory and
-/// attachments apart from its sessions.
 pub fn repo_dir_name_in(filter: &FilterConfig, projects_dir: &Path, encoded_dir: &str) -> String {
     if filter.use_project_name_only && canonical_id(&filter.project_map, encoded_dir).is_none() {
         if let Some(name) = project_name_from_transcripts(&projects_dir.join(encoded_dir)) {
@@ -172,8 +133,6 @@ pub fn repo_dir_name_in(filter: &FilterConfig, projects_dir: &Path, encoded_dir:
     repo_dir_name(filter, encoded_dir)
 }
 
-/// The folder name of the first `cwd` a transcript directly inside
-/// `project_dir` records, if any does.
 fn project_name_from_transcripts(project_dir: &Path) -> Option<String> {
     use std::io::BufRead;
 
@@ -205,8 +164,6 @@ fn project_name_from_transcripts(project_dir: &Path) -> Option<String> {
     None
 }
 
-/// The local project directory a sync-repo directory name belongs to, or
-/// `None` when this machine has no destination for it.
 pub fn local_project_dir(
     filter: &FilterConfig,
     projects_dir: &Path,
@@ -218,9 +175,6 @@ pub fn local_project_dir(
     if filter.use_project_name_only {
         return find_local_project_by_name(projects_dir, repo_dir_name);
     }
-    // An existing directory, or an encoded path Claude Code would create.
-    // Anything else is another machine's canonical id and has no destination
-    // here until this machine maps it too.
     let candidate = projects_dir.join(repo_dir_name);
     if candidate.is_dir() || is_encoded_project_path(repo_dir_name) {
         return Some(candidate);
@@ -228,14 +182,8 @@ pub fn local_project_dir(
     None
 }
 
-/// Files a pull has no local project for, grouped by the sync-repo directory
-/// name they came from.
 pub type SkippedByProject = BTreeMap<String, Vec<PathBuf>>;
 
-/// Split a path relative to the sync repo's projects directory into the
-/// project directory it belongs to and the path inside that project. A file
-/// lying beside the project directories belongs to no project, and nothing on
-/// this machine can take it.
 pub fn split_project_path(relative: &Path) -> Option<(&str, &Path)> {
     let mut parts = relative.components();
     let project = parts.next()?.as_os_str().to_str()?;
@@ -246,8 +194,6 @@ pub fn split_project_path(relative: &Path) -> Option<(&str, &Path)> {
     Some((project, inside_project))
 }
 
-/// Fold one set of misses into another, so a project whose sessions and whose
-/// attachments were both skipped is reported once rather than twice.
 pub fn merge_skipped(into: &mut SkippedByProject, more: &SkippedByProject) {
     for (project, files) in more {
         into.entry(project.clone())
@@ -256,14 +202,8 @@ pub fn merge_skipped(into: &mut SkippedByProject, more: &SkippedByProject) {
     }
 }
 
-/// What to do about a project this machine cannot place, in both warning modes.
 const MAPPING_REMEDY: &str = "Map each one: claude-code-sync config --map-project <id>=<path>.";
 
-/// The warning lines for files no local project claims: one line naming every
-/// project by default, one line per file when `each_file` is set.
-///
-/// A project this machine has not mapped holds every file it ever had, and a
-/// line each buries the one remedy under hundreds of repetitions of it.
 pub fn skipped_project_warnings(skipped: &SkippedByProject, each_file: bool) -> Vec<String> {
     if skipped.is_empty() {
         return Vec::new();
@@ -298,9 +238,6 @@ pub fn skipped_project_warnings(skipped: &SkippedByProject, each_file: bool) -> 
     )]
 }
 
-/// Whether a directory name is an encoded project path. Encoding an absolute
-/// path puts a dash where its root is: `/home/user/app` becomes
-/// `-home-user-app`, `C:\src\app` becomes `C--src-app`.
 fn is_encoded_project_path(name: &str) -> bool {
     name.starts_with('-') || name.get(1..3) == Some("--")
 }

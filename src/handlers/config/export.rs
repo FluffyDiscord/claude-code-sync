@@ -1,6 +1,3 @@
-//! `claude-code-sync config --export`: write the active configuration back out
-//! as a `claude-code-sync-init.toml`.
-
 use anyhow::{Context, Result};
 use colored::Colorize;
 use std::path::PathBuf;
@@ -9,10 +6,6 @@ use crate::filter::FilterConfig;
 use crate::onboarding::InitConfig;
 use crate::sync::{MultiRepoState, SyncState};
 
-/// Export current config as a claude-code-sync-init.toml in the current directory.
-///
-/// Reads the active sync state and filter config, builds an InitConfig, and writes
-/// it to `./claude-code-sync-init.toml`.
 pub fn handle_config_export() -> Result<()> {
     let filter = FilterConfig::load().context("Failed to load filter configuration")?;
 
@@ -50,7 +43,6 @@ pub fn handle_config_export() -> Result<()> {
         }
     };
 
-    // InitConfig has no home for these, so say so rather than dropping them silently.
     if !filter.include_patterns.is_empty() {
         eprintln!(
             "{} include_patterns are not included in the export and will need to be reconfigured",
@@ -63,9 +55,6 @@ pub fn handle_config_export() -> Result<()> {
             "!".yellow()
         );
     }
-    // Both describe THIS machine — the map's entries are local paths, and the
-    // merge tool is a local command — so carrying them elsewhere would point at
-    // things that do not exist there.
     if !filter.project_map.is_empty() {
         eprintln!(
             "{} project_map is per machine and is not exported; map the projects again \
@@ -117,16 +106,6 @@ mod tests {
     use std::collections::HashMap;
     use tempfile::TempDir;
 
-    /// Isolates a test from the developer's real config and working directory.
-    ///
-    /// `handle_config_export` writes to a *relative* path, so exercising it means
-    /// mutating two pieces of process-global state: the config-dir override and
-    /// the current directory. Restoring them in `Drop` rather than at the end of
-    /// the test body means an assertion failure can't leave the whole harness
-    /// pointed at a deleted temp dir.
-    ///
-    /// `CLAUDE_CODE_SYNC_CONFIG_DIR` is used rather than `XDG_CONFIG_HOME`
-    /// because macOS ignores the latter.
     struct ExportEnv {
         config_dir: TempDir,
         work_dir: TempDir,
@@ -149,7 +128,6 @@ mod tests {
             }
         }
 
-        /// Write a v2 MultiRepoState to the config dir's state.json
         fn with_multi_repo_state(self, repo_path: &str, remote_url: Option<&str>) -> Self {
             let remote_url = remote_url.map(str::to_string);
             let mut repos = HashMap::new();
@@ -179,7 +157,6 @@ mod tests {
             self
         }
 
-        /// Write a FilterConfig to the config dir's config.toml
         fn with_filter_config(self, filter: &FilterConfig) -> Self {
             let dir = self.claude_dir();
             std::fs::write(
@@ -196,7 +173,6 @@ mod tests {
             dir
         }
 
-        /// Read back the exported TOML from the working directory.
         fn exported(&self) -> InitConfig {
             toml::from_str(&self.exported_raw()).unwrap()
         }
@@ -211,7 +187,6 @@ mod tests {
     impl Drop for ExportEnv {
         fn drop(&mut self) {
             std::env::remove_var("CLAUDE_CODE_SYNC_CONFIG_DIR");
-            // Leave the cwd somewhere valid: `work_dir` is about to be deleted.
             let _ = std::env::set_current_dir(&self.original_dir);
         }
     }
@@ -273,8 +248,6 @@ mod tests {
     #[test]
     #[serial]
     fn test_export_falls_back_when_no_state() {
-        // No state.json: SyncState::load() and MultiRepoState::load() both fail,
-        // and the export must still produce a usable file.
         let env = ExportEnv::new().with_filter_config(&FilterConfig::default());
 
         handle_config_export().expect("export should still succeed with fallback");
@@ -288,7 +261,6 @@ mod tests {
     #[test]
     #[serial]
     fn test_export_defaults_from_empty_filter() {
-        // No config.toml: FilterConfig::load() returns defaults.
         let env = ExportEnv::new().with_multi_repo_state("/tmp/test-repo", None);
 
         handle_config_export().unwrap();
@@ -313,8 +285,6 @@ mod tests {
 
         handle_config_export().unwrap();
 
-        // Parse straight from the raw text: the point is that what we wrote
-        // survives a full serialize/deserialize round trip.
         let parsed: InitConfig = toml::from_str(&env.exported_raw()).unwrap();
 
         assert_eq!(parsed.repo_path, "/home/user/sync-repo");

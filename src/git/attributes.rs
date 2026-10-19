@@ -1,16 +1,3 @@
-//! `.gitattributes` in the sync repository.
-//!
-//! Every machine only ever appends to a transcript, to the prompt history and
-//! to a memory index. Git cannot know that: when two machines both appended
-//! between syncs, it reports a content conflict at the end of the file and the
-//! pull stops with nothing merged. Git's own `union` merge driver keeps both
-//! sides' lines instead, in no meaningful order. claude-code-sync puts them
-//! back in order on the way into `~/.claude`: the prompt history and memory
-//! indexes through `artifacts::union_jsonl` / `artifacts::memory_index`, and
-//! session transcripts through the smart merge (`merge.rs`), which drops
-//! duplicate UUIDs and sorts by timestamp. The next push writes that ordered
-//! copy back to the repository.
-
 use anyhow::{Context, Result};
 use std::fs;
 use std::path::Path;
@@ -24,17 +11,11 @@ const SYNC_ATTRIBUTE_RULES: &[&str] = &[
     "MEMORY.md merge=union",
 ];
 
-/// Write the sync rules into the repository's `.gitattributes`.
-///
-/// Returns whether anything was added, so a caller can commit only a real
-/// change.
 pub fn ensure_sync_attributes(repo_path: &Path) -> Result<bool> {
     let rules: Vec<String> = SYNC_ATTRIBUTE_RULES.iter().map(|s| s.to_string()).collect();
     ensure_lines(&repo_path.join(".gitattributes"), &rules)
 }
 
-/// Append every line that the file does not already contain, creating it if
-/// needed. Returns whether the file changed.
 pub fn ensure_lines(path: &Path, lines: &[String]) -> Result<bool> {
     let mut content = if path.exists() {
         fs::read_to_string(path).with_context(|| format!("Failed to read {}", path.display()))?

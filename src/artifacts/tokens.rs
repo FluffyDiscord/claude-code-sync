@@ -1,37 +1,14 @@
-//! Machine-neutral paths: this machine's absolute locations are stored in the
-//! sync repository as tokens and rendered back on the way out, so a hook
-//! command or a status line still resolves on a machine whose home directory
-//! or `~/.claude` location differs. Any absolute path in the file is
-//! neutralized, not specific keys.
-//!
-//! One type owns both directions: whatever `to_machine` renders, `to_repo`
-//! must undo, or two machines rewrite each other's values on every sync.
-
 use std::path::Path;
 
-/// Stands for this machine's `~`.
 pub const HOME_TOKEN: &str = "__HOME__";
-/// Stands for this machine's `~/.claude`. Tokenized before the home directory,
-/// since it is configurable and may sit outside it.
 pub const CLAUDE_DIR_TOKEN: &str = "__CLAUDE_DIR__";
 
-/// This machine's absolute locations and their neutral spellings.
-///
-/// Locations are rendered with `/` separators on every OS: `C:/Users/me` is
-/// valid inside a JSON string, resolves under Windows shells and Git Bash alike,
-/// and joins cleanly with a tail stored as `__HOME__/bin/x`. A raw Windows
-/// `C:\Users\me` would write `\U`, an invalid JSON escape.
-///
-/// The repo side recognizes both spellings a Windows file may hold —
-/// `C:\\Users\\me` (escaped backslashes) and `C:/Users/me` — and stores the
-/// path tail with `/`, so a path written on Windows still resolves on Linux.
 #[derive(Debug, Clone, Default)]
 pub struct PathTokens {
     home: Location,
     claude_dir: Location,
 }
 
-/// One absolute location: how it is rendered, and every spelling tokenized.
 #[derive(Debug, Clone, Default)]
 struct Location {
     rendered: String,
@@ -54,7 +31,6 @@ impl Location {
 }
 
 impl PathTokens {
-    /// Tokens for the machine whose Claude directory is `claude_dir`.
     pub fn for_claude_dir(claude_dir: &Path) -> Self {
         let home = dirs::home_dir()
             .map(|path| path.to_string_lossy().to_string())
@@ -62,7 +38,6 @@ impl PathTokens {
         Self::for_paths(&home, &claude_dir.to_string_lossy())
     }
 
-    /// Tokens for these two absolute locations, as written on this machine.
     fn for_paths(home: &str, claude_dir: &str) -> Self {
         PathTokens {
             home: Location::new(home),
@@ -70,7 +45,6 @@ impl PathTokens {
         }
     }
 
-    /// Machine bytes -> repo bytes. Non-UTF-8 content passes through unchanged.
     pub fn to_repo(&self, bytes: &[u8]) -> Vec<u8> {
         let Ok(text) = std::str::from_utf8(bytes) else {
             return bytes.to_vec();
@@ -87,7 +61,6 @@ impl PathTokens {
         text.into_bytes()
     }
 
-    /// Repo bytes -> machine bytes. Non-UTF-8 content passes through unchanged.
     pub fn to_machine(&self, bytes: &[u8]) -> Vec<u8> {
         let Ok(text) = std::str::from_utf8(bytes) else {
             return bytes.to_vec();
@@ -98,10 +71,6 @@ impl PathTokens {
     }
 }
 
-/// Replace `needle` with `token` only where the match is a whole path prefix:
-/// `/home/user` must not eat the `/home/username` of a machine that is not this one,
-/// nor the tail of an unrelated `/opt/home/user`. The tail after a replaced
-/// prefix has its escaped backslash separators turned into `/`.
 fn replace_path(text: &str, needle: &str, token: &str) -> String {
     let mut out = String::with_capacity(text.len());
     let mut rest = text;
@@ -123,9 +92,6 @@ fn replace_path(text: &str, needle: &str, token: &str) -> String {
     out
 }
 
-/// Copy the path continuing at the start of `text` into `out`, spelling each
-/// escaped backslash separator (`\\` in the JSON text) as `/`. Returns what
-/// follows the path.
 fn push_path_tail<'a>(out: &mut String, text: &'a str) -> &'a str {
     let mut rest = text;
     loop {
@@ -145,8 +111,6 @@ fn push_path_tail<'a>(out: &mut String, text: &'a str) -> &'a str {
     }
 }
 
-/// Whether a character next to a match makes it part of a longer path segment,
-/// which is what tells `/home/username` and `/opt/home/user` from `/home/user` itself.
 fn continues_a_segment(neighbour: Option<char>) -> bool {
     match neighbour {
         Some(character) => {

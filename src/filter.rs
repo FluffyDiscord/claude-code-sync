@@ -4,94 +4,56 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-/// Filter configuration for syncing Claude Code history
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FilterConfig {
-    /// Exclude projects older than N days
     #[serde(skip_serializing_if = "Option::is_none")]
     pub exclude_older_than_days: Option<u32>,
 
-    /// Include only these project path patterns (glob-style)
     #[serde(default)]
     pub include_patterns: Vec<String>,
 
-    /// Exclude these project path patterns (glob-style)
     #[serde(default)]
     pub exclude_patterns: Vec<String>,
 
-    /// Maximum file size in bytes (default: 10MB)
     #[serde(default = "default_max_file_size")]
     pub max_file_size_bytes: u64,
 
-    /// Exclude file attachments (images, PDFs, etc.)
     #[serde(default)]
     pub exclude_attachments: bool,
 
-    /// Enable Git LFS for large files
-    /// When enabled, files matching lfs_patterns will be stored via LFS
     #[serde(default)]
     pub enable_lfs: bool,
 
-    /// File patterns to track with LFS (e.g., "*.jsonl", "*.png")
-    /// Only used when enable_lfs is true
     #[serde(default = "default_lfs_patterns")]
     pub lfs_patterns: Vec<String>,
 
-    /// Subdirectory within sync repo to store projects (default: "projects")
-    /// Useful when using an existing repo and want to store history in a specific path
     #[serde(default = "default_sync_subdirectory")]
     pub sync_subdirectory: String,
 
-    /// Use only the project name (not full path) when syncing
-    /// When enabled, stores conversations using only the project directory name
-    /// instead of the full encoded path. This enables multi-device compatibility
-    /// when usernames or paths differ across machines.
     #[serde(default)]
     pub use_project_name_only: bool,
 
-    /// Per-category switches for syncing Claude Code artifacts beyond
-    /// conversation history (settings, skills, agents, ...). All default to
-    /// false so configs from older versions keep their exact behavior.
     #[serde(default)]
     pub sync_artifacts: crate::artifacts::registry::ArtifactToggles,
 
-    /// Canonical project id -> this machine's absolute path for that project.
-    /// A mapped project syncs under its id instead of its encoded path, so it
-    /// stays one project across machines that keep it elsewhere or under
-    /// another name. Unmapped projects are unaffected.
     #[serde(default)]
     pub project_map: crate::project_map::ProjectMap,
 
-    /// Sync only the projects in `project_map`; every other project, here or
-    /// in the repo, is left alone in both directions.
     #[serde(default)]
     pub mapped_projects_only: bool,
 
-    /// Delete transcripts older than this many days from both the machine and
-    /// the sync repository. Unset means the default window: the longer of six
-    /// months and this machine's own Claude Code retention.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub purge_older_than_days: Option<u32>,
 
-    /// Purge as part of every `sync`, between the pull and the push, so the
-    /// removals travel with that push. Off by default: purging deletes.
     #[serde(default)]
     pub purge_after_sync: bool,
 
-    /// Warn once per file a pull cannot place, the way older versions did.
-    /// Off by default: one unmapped project fills the terminal with a line per
-    /// file, all of them saying the same thing.
     #[serde(default)]
     pub warn_each_skipped_file: bool,
 
-    /// External three-way merge command for a conflicting file, invoked as
-    /// `<command> <local> <remote> <base> <output>` (the JetBrains
-    /// `phpstorm merge` argument order). Empty means the terminal picker only.
     #[serde(default)]
     pub merge_tool: String,
 
-    /// Start the per-file prompt on `merge` instead of the first option,
-    /// whenever the merge tool is offered.
     #[serde(default)]
     pub prefer_merge_tool: bool,
 }
@@ -101,7 +63,7 @@ fn default_lfs_patterns() -> Vec<String> {
 }
 
 fn default_max_file_size() -> u64 {
-    10 * 1024 * 1024 // 10MB
+    10 * 1024 * 1024
 }
 
 fn default_sync_subdirectory() -> String {
@@ -133,7 +95,6 @@ impl Default for FilterConfig {
 }
 
 impl FilterConfig {
-    /// Load configuration from file
     pub fn load() -> Result<Self> {
         let config_path = Self::config_path()?;
 
@@ -147,17 +108,6 @@ impl FilterConfig {
         let mut config: FilterConfig =
             toml::from_str(&content).context("Failed to parse config file")?;
 
-        // Repair rather than reject. A `max_file_size_bytes` of 0 filters out
-        // every file, so a user with one in their config sees sync silently do
-        // nothing -- and until this was fixed, entering a negative size at the
-        // `config` prompt wrote exactly that (the `as u64` cast saturates), so
-        // configs in the wild have it.
-        //
-        // Hard-failing here would be a trap: `handle_config_interactive` opens
-        // with `FilterConfig::load()`, so erroring would take down the one command
-        // that can fix the value and leave hand-editing TOML as the only way out.
-        // `validate()` is strict, so a bad value can never be *written*; on the
-        // read path we fall back to the default and say so.
         if config.max_file_size_bytes == 0 {
             let default = default_max_file_size();
             eprintln!(
@@ -173,7 +123,6 @@ impl FilterConfig {
         Ok(config)
     }
 
-    /// Save configuration to file
     pub fn save(&self) -> Result<()> {
         let config_path = Self::config_path()?;
 
@@ -191,24 +140,19 @@ impl FilterConfig {
         Ok(())
     }
 
-    /// Get the path to the config file
     fn config_path() -> Result<PathBuf> {
         crate::config::ConfigManager::filter_config_path()
     }
 
-    /// Check if a file should be included based on filters
     pub fn should_include(&self, file_path: &Path) -> bool {
-        // Only process .jsonl files (exclude attachments if configured)
         if self.exclude_attachments {
             if let Some(ext) = file_path.extension() {
                 if ext != "jsonl" {
-                    // This is an attachment (image, PDF, etc.)
                     return false;
                 }
             }
         }
 
-        // Check file size
         if let Ok(metadata) = fs::metadata(file_path) {
             if metadata.len() > self.max_file_size_bytes {
                 return false;
@@ -217,7 +161,6 @@ impl FilterConfig {
 
         let path_str = file_path.to_string_lossy();
 
-        // Check exclude patterns first
         if !self.exclude_patterns.is_empty() {
             for pattern in &self.exclude_patterns {
                 if glob_match(pattern, &path_str) {
@@ -226,7 +169,6 @@ impl FilterConfig {
             }
         }
 
-        // Check include patterns (if any are specified)
         if !self.include_patterns.is_empty() {
             let mut matches_include = false;
             for pattern in &self.include_patterns {
@@ -240,7 +182,6 @@ impl FilterConfig {
             }
         }
 
-        // Check age filter
         if let Some(max_days) = self.exclude_older_than_days {
             if let Ok(metadata) = fs::metadata(file_path) {
                 if let Ok(modified) = metadata.modified() {
@@ -259,7 +200,6 @@ impl FilterConfig {
         true
     }
 
-    /// Validate the configuration.
     pub fn validate(&self) -> Result<()> {
         if self.sync_subdirectory == crate::artifacts::registry::ARTIFACTS_SUBDIR {
             bail!(
@@ -268,9 +208,6 @@ impl FilterConfig {
                 crate::artifacts::registry::ARTIFACTS_SUBDIR
             );
         }
-        // It is joined onto the repository root and then walked, copied into
-        // and — since `purge` — deleted from. Anything that escapes or points
-        // at the root itself would take the rest of the repository with it.
         let subdirectory = Path::new(&self.sync_subdirectory);
         let escapes = subdirectory.is_absolute()
             || subdirectory
@@ -293,15 +230,12 @@ impl FilterConfig {
     }
 }
 
-/// Simple glob pattern matching
 fn glob_match(pattern: &str, text: &str) -> bool {
-    // Simple implementation - for production, use the `glob` crate
     if pattern.contains('*') {
         let parts: Vec<_> = pattern.split('*').collect();
         if parts.len() == 2 {
             text.starts_with(parts[0]) && text.ends_with(parts[1])
         } else {
-            // Simplified multi-wildcard support
             let mut pos = 0;
             for (i, part) in parts.iter().enumerate() {
                 if part.is_empty() {
@@ -327,9 +261,6 @@ fn glob_match(pattern: &str, text: &str) -> bool {
     }
 }
 
-/// Add or remove `[project_map]` entries. `add` holds `id=/absolute/path`
-/// pairs or bare paths; `remove` holds ids. Removals run first, so an id can
-/// be re-pointed in one command.
 pub fn update_project_map(add: &[String], remove: &[String]) -> Result<()> {
     let mut config = FilterConfig::load()?;
 
@@ -352,7 +283,6 @@ pub fn update_project_map(add: &[String], remove: &[String]) -> Result<()> {
     Ok(())
 }
 
-/// Set the retention window and whether a sync purges.
 pub fn configure_purge(older_than_days: Option<u32>, after_sync: Option<bool>) -> Result<()> {
     let mut config = FilterConfig::load()?;
 
@@ -386,7 +316,6 @@ pub fn configure_purge(older_than_days: Option<u32>, after_sync: Option<bool>) -
     Ok(())
 }
 
-/// Choose between one warning per pull and one per file a pull cannot place.
 pub fn set_warn_each_skipped_file(each_file: bool) -> Result<()> {
     let mut config = FilterConfig::load()?;
     config.warn_each_skipped_file = each_file;
@@ -408,7 +337,6 @@ pub fn set_warn_each_skipped_file(each_file: bool) -> Result<()> {
     Ok(())
 }
 
-/// Choose between syncing every project and only the mapped ones.
 pub fn set_mapped_projects_only(mapped_only: bool) -> Result<()> {
     let mut config = FilterConfig::load()?;
     config.mapped_projects_only = mapped_only;
@@ -440,7 +368,6 @@ fn projects_synced_label(mapped_only: bool) -> &'static str {
     }
 }
 
-/// Set (or clear, when empty) the external merge command.
 pub fn set_merge_tool(command: &str) -> Result<()> {
     let mut config = FilterConfig::load()?;
     config.merge_tool = command.trim().to_string();
@@ -455,7 +382,6 @@ pub fn set_merge_tool(command: &str) -> Result<()> {
     Ok(())
 }
 
-/// Choose whether the per-file prompt starts on the merge tool.
 pub fn set_prefer_merge_tool(prefer: bool) -> Result<()> {
     let mut config = FilterConfig::load()?;
     config.prefer_merge_tool = prefer;
@@ -467,7 +393,6 @@ pub fn set_prefer_merge_tool(prefer: bool) -> Result<()> {
     Ok(())
 }
 
-/// Update the filter configuration
 #[allow(clippy::too_many_arguments)]
 pub fn update_config(
     exclude_older_than: Option<u32>,
@@ -576,7 +501,6 @@ pub fn update_config(
         apply_artifact_toggles(&mut config, &names, false)?;
     }
 
-    // Validate configuration before saving
     config.validate()?;
 
     config.save()?;
@@ -585,8 +509,6 @@ pub fn update_config(
     Ok(())
 }
 
-/// Resolve a comma-separated list of category names (or `all`) and flip their
-/// toggles. Unknown names abort before anything is persisted.
 fn apply_artifact_toggles(config: &mut FilterConfig, names: &str, value: bool) -> Result<()> {
     use crate::artifacts::registry::{find_by_name, ArtifactToggles, CategoryId};
 
@@ -595,7 +517,6 @@ fn apply_artifact_toggles(config: &mut FilterConfig, names: &str, value: bool) -
     for name in names.split(',').map(str::trim).filter(|s| !s.is_empty()) {
         if name == "all" {
             if value {
-                // Keep hooks as they were: `all` never switches them on.
                 let hooks = config.sync_artifacts.is_enabled(CategoryId::Hooks);
                 config.sync_artifacts = ArtifactToggles::all_but_hooks();
                 config.sync_artifacts.set_enabled(CategoryId::Hooks, hooks);
@@ -639,7 +560,6 @@ fn apply_artifact_toggles(config: &mut FilterConfig, names: &str, value: bool) -
     Ok(())
 }
 
-/// Show the current filter configuration
 pub fn show_config() -> Result<()> {
     let config = FilterConfig::load()?;
 
@@ -840,8 +760,6 @@ mod tests {
 
     #[test]
     fn test_validate_rejects_zero_max_file_size() {
-        // 0 bytes means `should_include` rejects everything, so sync silently
-        // does nothing. It must never be written to disk.
         let config = FilterConfig {
             max_file_size_bytes: 0,
             ..Default::default()
@@ -865,9 +783,6 @@ mod tests {
 
     #[test]
     fn test_zero_max_file_size_excludes_every_real_file() {
-        // Pins down *why* 0 is rejected, rather than asserting it in the abstract.
-        // The file has to actually exist: `should_include` only consults the size
-        // when `fs::metadata` succeeds.
         let dir = tempfile::tempdir().unwrap();
         let file = dir.path().join("session.jsonl");
         fs::write(&file, b"x").unwrap();
@@ -909,26 +824,20 @@ mod tests {
     fn test_exclude_attachments_filter() {
         use std::path::PathBuf;
 
-        // Config with exclude_attachments = false (default)
         let config_include_all = FilterConfig::default();
 
-        // Should include .jsonl files
         assert!(config_include_all.should_include(&PathBuf::from("session.jsonl")));
 
-        // Should also include other files when exclude_attachments is false
         assert!(config_include_all.should_include(&PathBuf::from("image.png")));
         assert!(config_include_all.should_include(&PathBuf::from("document.pdf")));
 
-        // Config with exclude_attachments = true
         let config_exclude = FilterConfig {
             exclude_attachments: true,
             ..Default::default()
         };
 
-        // Should include .jsonl files
         assert!(config_exclude.should_include(&PathBuf::from("session.jsonl")));
 
-        // Should exclude non-.jsonl files
         assert!(!config_exclude.should_include(&PathBuf::from("image.png")));
         assert!(!config_exclude.should_include(&PathBuf::from("image.jpg")));
         assert!(!config_exclude.should_include(&PathBuf::from("document.pdf")));
@@ -945,13 +854,10 @@ mod tests {
             ..Default::default()
         };
 
-        // Should exclude based on attachment filter
         assert!(!config.should_include(&PathBuf::from("image.png")));
 
-        // Should exclude based on pattern even for .jsonl
         assert!(!config.should_include(&PathBuf::from("/path/test/session.jsonl")));
 
-        // Should include .jsonl that doesn't match exclude pattern
         assert!(config.should_include(&PathBuf::from("/path/prod/session.jsonl")));
     }
 
@@ -963,11 +869,9 @@ mod tests {
             ..Default::default()
         };
 
-        // Test that it can be serialized
         let serialized = toml::to_string(&config).unwrap();
         assert!(serialized.contains("exclude_attachments"));
 
-        // Test that it can be deserialized
         let deserialized: FilterConfig = toml::from_str(&serialized).unwrap();
         assert!(deserialized.exclude_attachments);
         assert_eq!(deserialized.exclude_older_than_days, Some(30));

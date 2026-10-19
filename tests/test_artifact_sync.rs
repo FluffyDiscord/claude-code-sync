@@ -1,6 +1,3 @@
-//! Integration tests for the artifact sync engine (push side + ignore files).
-//! All engine functions take explicit paths, so no env-var isolation is needed.
-
 use std::fs;
 use std::path::Path;
 
@@ -9,8 +6,6 @@ use claude_code_sync::artifacts::registry::{ArtifactToggles, CategoryId};
 use claude_code_sync::filter::FilterConfig;
 use tempfile::TempDir;
 
-/// Build a `~/.claude`-shaped tree with every syncable artifact plus the
-/// machine-local and secret files that must never move.
 fn seed_claude_dir(claude: &Path) {
     fs::write(claude.join("settings.json"), b"{\"model\":\"opus\"}").unwrap();
     fs::write(claude.join("keybindings.json"), b"{\"ctrl+s\":\"save\"}").unwrap();
@@ -96,7 +91,6 @@ fn test_push_creates_expected_layout() {
     assert!(a.join("todos/session-1.json").is_file());
     assert!(a.join("prompt-history/history.jsonl").is_file());
 
-    // Never-sync material is absent anywhere in the repo.
     assert!(!a.join("settings/settings.local.json").exists());
     let mut denied_found = false;
     for entry in walkdir::WalkDir::new(repo.path()) {
@@ -113,7 +107,6 @@ fn test_push_creates_expected_layout() {
     }
     assert!(!denied_found, "no denied or cache file may reach the repo");
 
-    // Everything was new on first push.
     let added: usize = report.counts.iter().map(|c| c.added).sum();
     assert!(added >= 12, "all seeded artifacts count as added: {added}");
     let modified: usize = report.counts.iter().map(|c| c.modified).sum();
@@ -191,7 +184,7 @@ fn test_disabled_categories_untouched() {
 
 #[test]
 fn test_missing_sources_are_silent_noops() {
-    let claude = TempDir::new().unwrap(); // empty ~/.claude
+    let claude = TempDir::new().unwrap();
     let repo = TempDir::new().unwrap();
 
     let report = push_artifacts(claude.path(), repo.path(), &all_on_filter()).unwrap();
@@ -209,7 +202,6 @@ fn test_denied_files_inside_categories_never_pushed() {
     let repo = TempDir::new().unwrap();
     seed_claude_dir(claude.path());
 
-    // Plant secrets inside an otherwise-synced directory category.
     fs::write(
         claude.path().join("skills/my-skill/.credentials.json"),
         b"{\"token\":\"leaked\"}",
@@ -220,8 +212,6 @@ fn test_denied_files_inside_categories_never_pushed() {
     fs::create_dir_all(claude.path().join("plans/cache")).unwrap();
     fs::write(claude.path().join("plans/cache/blob"), b"x").unwrap();
 
-    // User config trying to force-include secrets must have no effect:
-    // artifact sync never consults include/exclude patterns.
     let mut filter = all_on_filter();
     filter.include_patterns = vec!["*credentials*".to_string(), "*.pem".to_string()];
 
@@ -284,7 +274,6 @@ fn test_push_unions_prompt_history() {
     seed_claude_dir(claude.path());
     let filter = all_on_filter();
 
-    // The repo already holds lines from another machine.
     let repo_history = repo.path().join("artifacts/prompt-history/history.jsonl");
     fs::create_dir_all(repo_history.parent().unwrap()).unwrap();
     fs::write(
@@ -361,10 +350,6 @@ fn test_ignore_file_managed_block_is_idempotent_and_preserving() {
     assert!(after_first.contains(".env*"));
 }
 
-// ============================================================================
-// Pull side
-// ============================================================================
-
 use claude_code_sync::artifacts::engine::{apply_pull, plan_pull};
 
 #[test]
@@ -412,7 +397,6 @@ fn test_pull_remote_wins_when_bytes_differ() {
     let filter = all_on_filter();
     push_artifacts(machine_a.path(), repo.path(), &filter).unwrap();
 
-    // Machine B has its own, different settings.
     fs::write(
         machine_b.path().join("settings.json"),
         b"{\"model\":\"local\"}",
@@ -443,7 +427,6 @@ fn test_pull_does_not_rewrite_identical_files() {
     let filter = all_on_filter();
     push_artifacts(machine_a.path(), repo.path(), &filter).unwrap();
 
-    // Pulling straight back into the same machine: everything identical.
     let plan = plan_pull(machine_a.path(), repo.path(), &filter).unwrap();
     assert!(
         plan.is_empty(),
@@ -507,7 +490,6 @@ fn test_pull_refuses_denied_files_planted_in_repo() {
     let repo = TempDir::new().unwrap();
     let filter = all_on_filter();
 
-    // A poisoned sync repo tries to deliver credentials and key material.
     fs::create_dir_all(repo.path().join("artifacts/settings")).unwrap();
     fs::write(repo.path().join("artifacts/settings/settings.json"), b"{}").unwrap();
     fs::write(
@@ -534,8 +516,6 @@ fn test_pull_refuses_denied_files_planted_in_repo() {
 
 #[test]
 fn test_pull_plan_snapshot_paths_enable_exact_undo() {
-    // The pull plan's snapshot inputs must make undo an exact inverse:
-    // overwritten files restore to their old bytes, created files are deleted.
     use claude_code_sync::history::OperationType;
     use claude_code_sync::undo::Snapshot;
 
@@ -546,7 +526,6 @@ fn test_pull_plan_snapshot_paths_enable_exact_undo() {
     let filter = all_on_filter();
     push_artifacts(machine_a.path(), repo.path(), &filter).unwrap();
 
-    // Machine B: one file that will be overwritten, everything else created.
     fs::write(
         machine_b.path().join("settings.json"),
         b"{\"model\":\"mine\"}",
@@ -566,7 +545,6 @@ fn test_pull_plan_snapshot_paths_enable_exact_undo() {
     );
     assert!(machine_b.path().join("CLAUDE.md").is_file());
 
-    // Undo: restore the snapshot.
     snapshot.restore_with_base(Some(machine_b.path())).unwrap();
     assert_eq!(
         fs::read(machine_b.path().join("settings.json")).unwrap(),
@@ -582,10 +560,6 @@ fn test_pull_plan_snapshot_paths_enable_exact_undo() {
         "created skill removed by undo"
     );
 }
-
-// ============================================================================
-// Project attachments (non-JSONL files in the session tree)
-// ============================================================================
 
 fn seed_project_with_attachment(claude: &Path) {
     let proj = claude.join("projects/-home-user-myproj");
@@ -605,7 +579,6 @@ fn test_attachments_push_copies_non_jsonl_into_session_tree() {
     let repo = TempDir::new().unwrap();
     seed_project_with_attachment(claude.path());
 
-    // Default config: no artifact toggles, attachments NOT excluded.
     let filter = FilterConfig::default();
     let report = push_artifacts(claude.path(), repo.path(), &filter).unwrap();
 
@@ -659,7 +632,6 @@ fn test_attachments_pull_ignores_remote_transcripts() {
     let machine_b = TempDir::new().unwrap();
     let repo = TempDir::new().unwrap();
 
-    // Sync repo has a session transcript AND an attachment side by side.
     let proj = repo.path().join("projects/-home-user-myproj");
     fs::create_dir_all(&proj).unwrap();
     fs::write(
@@ -705,7 +677,6 @@ fn test_attachments_map_project_names_in_name_only_mode() {
         "encoded dir collapses to the bare project name on push"
     );
 
-    // Pulling into a machine whose encoded path differs but project name matches.
     let machine_b = TempDir::new().unwrap();
     fs::create_dir_all(machine_b.path().join("projects/-Users-other-dev-myproj")).unwrap();
     let plan = plan_pull(machine_b.path(), repo.path(), &filter).unwrap();
@@ -718,7 +689,6 @@ fn test_attachments_map_project_names_in_name_only_mode() {
         "attachment maps back through the local project dir with the same name"
     );
 
-    // No matching local project: the file is skipped, not misplaced.
     let machine_c = TempDir::new().unwrap();
     let plan = plan_pull(machine_c.path(), repo.path(), &filter).unwrap();
     apply_pull(&plan, false).unwrap();
@@ -764,9 +734,6 @@ fn test_unmapped_project_files_are_grouped_into_one_warning() {
 
 #[test]
 fn test_pull_refuses_unlisted_files_in_allowlist_categories() {
-    // A Files-sourced category (settings, plugins, ...) is an exact
-    // allowlist: a repo carrying an unexpected filename inside that
-    // category directory must be skipped, never written into ~/.claude.
     let machine_b = TempDir::new().unwrap();
     let repo = TempDir::new().unwrap();
     let filter = all_on_filter();

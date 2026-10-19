@@ -7,18 +7,12 @@ use std::path::{Path, PathBuf};
 use crate::conflict::{Conflict, ConflictResolution};
 use crate::parser::ConversationSession;
 
-/// Resolution action chosen by the user
 #[derive(Debug, Clone)]
 pub enum ResolutionAction {
-    /// Intelligently merge both versions (default/recommended)
     SmartMerge,
-    /// Keep the local version and discard the remote changes
     KeepLocal,
-    /// Keep the remote version and overwrite the local file
     KeepRemote,
-    /// Keep both versions by saving the remote file with a conflict suffix
     KeepBoth,
-    /// View detailed comparison of the conflicting files (does not resolve the conflict)
     ViewDetails,
 }
 
@@ -34,16 +28,11 @@ impl std::fmt::Display for ResolutionAction {
     }
 }
 
-/// Result of interactive conflict resolution
 #[derive(Debug)]
 pub struct ResolutionResult {
-    /// Conflicts resolved via smart merge
     pub smart_merge: Vec<Conflict>,
-    /// Conflicts that should keep local version (discard remote)
     pub keep_local: Vec<Conflict>,
-    /// Conflicts that should keep remote version (overwrite local)
     pub keep_remote: Vec<Conflict>,
-    /// Conflicts that should keep both versions (rename remote)
     pub keep_both: Vec<Conflict>,
 }
 
@@ -54,7 +43,6 @@ impl Default for ResolutionResult {
 }
 
 impl ResolutionResult {
-    /// Creates a new empty ResolutionResult with all conflict vectors initialized
     pub fn new() -> Self {
         ResolutionResult {
             smart_merge: Vec::new(),
@@ -64,7 +52,6 @@ impl ResolutionResult {
         }
     }
 
-    /// Total number of conflicts resolved
     #[allow(dead_code)]
     pub fn total(&self) -> usize {
         self.smart_merge.len()
@@ -74,13 +61,10 @@ impl ResolutionResult {
     }
 }
 
-/// Check if we're running in an interactive terminal
 pub fn is_interactive() -> bool {
     std::io::stdin().is_terminal() && std::io::stdout().is_terminal()
 }
 
-/// Ask `question` in a terminal (default no). Anywhere else only `assume_yes`
-/// approves, and `rerun_hint` tells the user how to re-run.
 pub fn ask_confirmation(question: &str, rerun_hint: &str, assume_yes: bool) -> bool {
     if assume_yes {
         return true;
@@ -98,7 +82,6 @@ pub fn ask_confirmation(question: &str, rerun_hint: &str, assume_yes: bool) -> b
         .unwrap_or(false)
 }
 
-/// Display detailed conflict information
 fn display_conflict_details(conflict: &Conflict) {
     println!("\n{}", "=".repeat(80).cyan());
     println!("{}", "Conflict Details".bold().cyan());
@@ -134,7 +117,6 @@ fn display_conflict_details(conflict: &Conflict) {
     }
     println!("  Content hash: {}", &conflict.remote_hash[..16].dimmed());
 
-    // Highlight the differences
     let msg_diff = conflict.remote_message_count as i32 - conflict.local_message_count as i32;
     if msg_diff > 0 {
         println!(
@@ -158,7 +140,6 @@ fn display_conflict_details(conflict: &Conflict) {
     println!("{}", "=".repeat(80).cyan());
 }
 
-/// Interactively resolve a single conflict
 fn resolve_conflict_interactive(conflict: &Conflict) -> Result<ResolutionAction> {
     loop {
         println!("\n{}", "Conflict Detected!".yellow().bold());
@@ -179,7 +160,6 @@ fn resolve_conflict_interactive(conflict: &Conflict) -> Result<ResolutionAction>
         match action {
             ResolutionAction::ViewDetails => {
                 display_conflict_details(conflict);
-                // Loop back to ask again
                 continue;
             }
             _ => return Ok(action),
@@ -187,18 +167,6 @@ fn resolve_conflict_interactive(conflict: &Conflict) -> Result<ResolutionAction>
     }
 }
 
-/// Interactively resolve all conflicts
-///
-/// This function presents each conflict to the user one at a time,
-/// allowing them to choose how to resolve it.
-///
-/// # Arguments
-/// * `conflicts` - Mutable slice of conflicts to resolve
-/// * `local_sessions` - Optional map of local sessions (for smart merge)
-/// * `remote_sessions` - Optional map of remote sessions (for smart merge)
-///
-/// # Returns
-/// A `ResolutionResult` containing the categorized conflicts
 pub fn resolve_conflicts_interactive_with_sessions(
     conflicts: &mut [Conflict],
     local_sessions: Option<&std::collections::HashMap<String, &ConversationSession>>,
@@ -232,7 +200,6 @@ pub fn resolve_conflicts_interactive_with_sessions(
 
         match action {
             ResolutionAction::SmartMerge => {
-                // Attempt smart merge
                 if let (Some(local_map), Some(remote_map)) = (local_sessions, remote_sessions) {
                     if let (Some(&local_session), Some(&remote_session)) = (
                         local_map.get(&conflict.session_id),
@@ -257,7 +224,6 @@ pub fn resolve_conflicts_interactive_with_sessions(
                             Err(e) => {
                                 eprintln!("  {} Smart merge failed: {}", "✗".red(), e);
                                 eprintln!("  Please choose another resolution method...");
-                                // Don't add to result, user will be prompted again
                                 continue;
                             }
                         }
@@ -290,7 +256,6 @@ pub fn resolve_conflicts_interactive_with_sessions(
                     "  {} Keeping both versions (remote will be saved with conflict suffix)",
                     "✓".cyan()
                 );
-                // Keep both is handled later with proper renaming
                 result.keep_both.push(conflict.clone());
             }
             ResolutionAction::ViewDetails => {
@@ -320,7 +285,6 @@ pub fn resolve_conflicts_interactive_with_sessions(
     );
     println!("{}", "=".repeat(80).green());
 
-    // Final confirmation
     let confirm = Confirm::new("Apply?")
         .with_default(true)
         .prompt()
@@ -335,24 +299,10 @@ pub fn resolve_conflicts_interactive_with_sessions(
     Ok(result)
 }
 
-/// Backward-compatible version of resolve_conflicts_interactive without session maps
-///
-/// This version doesn't support SmartMerge since it requires session data.
-/// Use `resolve_conflicts_interactive_with_sessions` for full functionality.
 pub fn resolve_conflicts_interactive(conflicts: &mut [Conflict]) -> Result<ResolutionResult> {
     resolve_conflicts_interactive_with_sessions(conflicts, None, None)
 }
 
-/// Apply the resolution results by copying/writing files
-///
-/// # Arguments
-/// * `result` - The resolution result containing categorized conflicts
-/// * `remote_sessions` - All remote sessions (to find the ones we need)
-/// * `claude_dir` - The Claude projects directory
-/// * `_remote_projects_dir` - The remote sync repository projects directory (unused)
-///
-/// # Returns
-/// List of (original_path, renamed_path) tuples for conflicts kept as both
 pub fn apply_resolutions(
     result: &ResolutionResult,
     remote_sessions: &[ConversationSession],
@@ -376,14 +326,11 @@ pub fn apply_resolutions(
         );
     }
 
-    // Handle "keep remote" - overwrite local with remote
     for conflict in &result.keep_remote {
-        // Find the remote session
         if let Some(remote_session) = remote_sessions
             .iter()
             .find(|s| s.session_id == conflict.session_id)
         {
-            // Copy the remote transcript over the local one
             remote_session
                 .copy_to(&conflict.local_file)
                 .with_context(|| {
@@ -401,7 +348,6 @@ pub fn apply_resolutions(
         }
     }
 
-    // Handle "keep both" - save remote with conflict suffix
     for conflict in &result.keep_both {
         let timestamp = chrono::Utc::now().format("%Y%m%d-%H%M%S");
         let conflict_suffix = format!("conflict-{timestamp}");
@@ -411,7 +357,6 @@ pub fn apply_resolutions(
             .resolve_keep_both(&conflict_suffix)
             .with_context(|| format!("Failed to resolve keep_both for {}", conflict.session_id))?;
 
-        // Find and write the remote session to the renamed path
         if let Some(remote_session) = remote_sessions
             .iter()
             .find(|s| s.session_id == conflict.session_id)
@@ -435,8 +380,6 @@ pub fn apply_resolutions(
             renames.push((conflict.remote_file.clone(), renamed_path));
         }
     }
-
-    // "keep local" requires no action - we simply don't copy the remote file
 
     Ok(renames)
 }

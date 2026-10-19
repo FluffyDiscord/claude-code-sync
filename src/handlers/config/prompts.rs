@@ -1,9 +1,3 @@
-//! Terminal interaction shared by the interactive and wizard config modes.
-//!
-//! Separate from `fields.rs` because everything here writes to stdout or opens
-//! an `inquire` prompt. Keeping the two apart is what lets `fields.rs` be tested
-//! without a TTY.
-
 use anyhow::{Context, Result};
 use colored::Colorize;
 use inquire::MultiSelect;
@@ -12,7 +6,6 @@ use super::fields::{format_age_days, format_patterns, format_size_mb};
 use crate::artifacts::registry::{find_by_name, toggleable, ArtifactToggles};
 use crate::filter::FilterConfig;
 
-/// Display a compact configuration summary.
 pub(super) fn display_config_summary(config: &FilterConfig) {
     println!(
         "  {} {}",
@@ -69,13 +62,10 @@ pub(super) fn display_config_summary(config: &FilterConfig) {
     );
 }
 
-/// The current age filter, rendered for a "Current: ..." line.
 pub(super) fn current_age(config: &FilterConfig) -> String {
     format_age_days(config.exclude_older_than_days)
 }
 
-/// MultiSelect over all artifact categories, pre-selecting the currently
-/// enabled ones. Returns the resulting toggles.
 pub(super) fn prompt_artifact_toggle_selection(
     current: &ArtifactToggles,
 ) -> Result<ArtifactToggles> {

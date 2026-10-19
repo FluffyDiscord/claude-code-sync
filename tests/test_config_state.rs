@@ -1,5 +1,3 @@
-//! Config paths, filter configuration, and SyncState serialization.
-
 mod common;
 
 use anyhow::Result;
@@ -9,10 +7,6 @@ use claude_code_sync::sync::SyncState;
 use common::ConfigEnv;
 use serial_test::serial;
 use std::path::PathBuf;
-
-// ---------------------------------------------------------------------------
-// ConfigManager paths
-// ---------------------------------------------------------------------------
 
 #[test]
 #[serial]
@@ -55,8 +49,6 @@ fn test_default_repo_dir_exists() -> Result<()> {
 #[test]
 #[serial]
 fn test_ensure_config_dir_creates_directory() -> Result<()> {
-    // Guarded: this mkdir's, and without the override it would do so in the
-    // developer's real home directory.
     let _env = ConfigEnv::new();
 
     let config_dir = ConfigManager::ensure_config_dir()?;
@@ -84,10 +76,6 @@ fn test_config_directory_structure() -> Result<()> {
     Ok(())
 }
 
-// ---------------------------------------------------------------------------
-// FilterConfig
-// ---------------------------------------------------------------------------
-
 #[test]
 #[serial]
 fn test_filter_config_save_and_load() -> Result<()> {
@@ -112,7 +100,6 @@ fn test_filter_config_save_and_load() -> Result<()> {
 fn test_multiple_config_operations() -> Result<()> {
     let _env = ConfigEnv::new();
 
-    // Loading from an empty config dir must yield defaults rather than erroring.
     let _loaded = FilterConfig::load()?;
 
     let config = FilterConfig {
@@ -134,9 +121,6 @@ fn test_multiple_config_operations() -> Result<()> {
 fn test_load_repairs_a_zero_max_file_size() -> Result<()> {
     let env = ConfigEnv::new();
 
-    // A config.toml as the pre-fix prompt would have written it: entering a
-    // negative size saturated the `as u64` cast to 0, which excludes every file.
-    // Loading must not hand that straight back, or sync silently does nothing.
     std::fs::write(
         env.config_dir().join("config.toml"),
         "max_file_size_bytes = 0\n",
@@ -149,8 +133,6 @@ fn test_load_repairs_a_zero_max_file_size() -> Result<()> {
         "load must repair a 0-byte limit rather than return it"
     );
 
-    // And loading must still *succeed* — `config` is the command that fixes this,
-    // and it opens by calling load(), so a hard error here would lock the user out.
     let file = env.join("session.jsonl");
     std::fs::write(&file, b"x")?;
     assert!(loaded.should_include(&file));
@@ -174,10 +156,6 @@ fn test_filter_config_with_attachments() -> Result<()> {
     Ok(())
 }
 
-// ---------------------------------------------------------------------------
-// SyncState (de)serialization
-// ---------------------------------------------------------------------------
-
 #[test]
 fn test_sync_state_with_cloned_flag() -> Result<()> {
     let state = SyncState {
@@ -200,7 +178,6 @@ fn test_sync_state_with_cloned_flag() -> Result<()> {
 
 #[test]
 fn test_sync_state_backwards_compatible() -> Result<()> {
-    // State files written before `is_cloned_repo` existed must still load.
     let old_state_json = r#"{
         "sync_repo_path": "/tmp/test-repo",
         "has_remote": true
@@ -208,7 +185,7 @@ fn test_sync_state_backwards_compatible() -> Result<()> {
 
     let state: SyncState = serde_json::from_str(old_state_json)?;
     assert!(state.has_remote);
-    assert!(!state.is_cloned_repo); // Should default to false
+    assert!(!state.is_cloned_repo);
 
     Ok(())
 }

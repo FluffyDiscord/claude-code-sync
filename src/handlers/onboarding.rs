@@ -1,8 +1,3 @@
-//! Onboarding and initialization handlers
-//!
-//! Handles the first-time setup flow including checking initialization
-//! status and running the interactive onboarding process.
-
 use anyhow::{Context, Result};
 use colored::Colorize;
 use std::path::Path;
@@ -13,19 +8,15 @@ use crate::git::GitRepo;
 use crate::onboarding::{self, InitConfig};
 use crate::sync;
 
-/// Check if claude-code-sync has been initialized
 pub fn is_initialized() -> Result<bool> {
     let state_path = config::ConfigManager::state_file_path()?;
     Ok(state_path.exists())
 }
 
-/// Run the onboarding flow and initialize the system
 pub fn run_onboarding_flow() -> Result<()> {
-    // Run the interactive onboarding
     let onboarding_config =
         onboarding::run_onboarding().context("Onboarding cancelled or failed")?;
 
-    // Handle cloning if needed
     if onboarding_config.is_cloned {
         if let Some(ref remote_url) = onboarding_config.remote_url {
             println!();
@@ -38,7 +29,6 @@ pub fn run_onboarding_flow() -> Result<()> {
         }
     }
 
-    // Initialize sync state
     sync::init_from_onboarding(
         &onboarding_config.repo_path,
         onboarding_config.remote_url.as_deref(),
@@ -46,7 +36,6 @@ pub fn run_onboarding_flow() -> Result<()> {
     )
     .context("Failed to initialize sync state")?;
 
-    // Save filter configuration
     let filter_config = filter::FilterConfig {
         exclude_attachments: onboarding_config.exclude_attachments,
         exclude_older_than_days: onboarding_config.exclude_older_than_days,
@@ -63,14 +52,7 @@ pub fn run_onboarding_flow() -> Result<()> {
     Ok(())
 }
 
-/// Run initialization from a config file (non-interactive).
-///
-/// This is used when:
-/// - A config file is explicitly provided via `--config`
-/// - A config file exists at a default location
-/// - The environment variable `CLAUDE_CODE_SYNC_INIT_CONFIG` is set
 pub fn run_init_from_config<P: AsRef<Path>>(config_path: Option<P>) -> Result<()> {
-    // Load config from explicit path or default locations
     let init_config = if let Some(path) = config_path {
         log::info!("Loading init config from: {}", path.as_ref().display());
         InitConfig::load(path.as_ref())?
@@ -80,10 +62,8 @@ pub fn run_init_from_config<P: AsRef<Path>>(config_path: Option<P>) -> Result<()
 
     println!("{}", "📄 Initializing from config file...".cyan().bold());
 
-    // Convert to onboarding config
     let onboarding_config = init_config.to_onboarding_config()?;
 
-    // Handle cloning if needed
     if onboarding_config.is_cloned {
         if let Some(ref remote_url) = onboarding_config.remote_url {
             println!("  {} {}", "Cloning from:".cyan(), remote_url);
@@ -95,7 +75,6 @@ pub fn run_init_from_config<P: AsRef<Path>>(config_path: Option<P>) -> Result<()
         }
     }
 
-    // Initialize sync state
     sync::init_from_onboarding(
         &onboarding_config.repo_path,
         onboarding_config.remote_url.as_deref(),
@@ -103,7 +82,6 @@ pub fn run_init_from_config<P: AsRef<Path>>(config_path: Option<P>) -> Result<()
     )
     .context("Failed to initialize sync state")?;
 
-    // Save filter configuration with all settings from init config
     let filter_config = filter::FilterConfig {
         exclude_attachments: init_config.exclude_attachments,
         exclude_older_than_days: init_config.exclude_older_than_days,
@@ -133,9 +111,6 @@ pub fn run_init_from_config<P: AsRef<Path>>(config_path: Option<P>) -> Result<()
     Ok(())
 }
 
-/// Try to run non-interactive initialization if a config file exists.
-///
-/// Returns Ok(true) if initialization was performed, Ok(false) if no config found.
 pub fn try_init_from_config() -> Result<bool> {
     match InitConfig::load_default()? {
         Some(_) => {

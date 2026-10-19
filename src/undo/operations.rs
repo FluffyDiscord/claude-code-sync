@@ -6,31 +6,13 @@ use super::snapshot::Snapshot;
 use crate::git::GitRepo;
 use crate::history::{OperationHistory, OperationType};
 
-/// Undo the last pull operation
-///
-/// This function:
-/// 1. Loads the operation history
-/// 2. Finds the most recent pull operation
-/// 3. Loads the snapshot that was taken before that pull
-/// 4. Restores all files to their pre-pull state
-/// 5. Updates the operation history to mark the pull as undone
-///
-/// # Arguments
-/// * `history_path` - Optional custom path for operation history (for testing)
-/// * `allowed_base_dir` - Optional base directory for path validation (for testing)
-///
-/// # Returns
-/// A summary message describing what was undone
 pub fn undo_pull(history_path: Option<PathBuf>, allowed_base_dir: Option<&Path>) -> Result<String> {
-    // Load operation history
     let history = OperationHistory::from_path(history_path.clone())?;
 
-    // Find the last pull operation
     let last_pull = history
         .get_last_operation_by_type(OperationType::Pull)
         .ok_or_else(|| anyhow!("No pull operation found in history to undo"))?;
 
-    // Get the snapshot path
     let snapshot_path = last_pull.snapshot_path.as_ref().ok_or_else(|| {
         anyhow!(
             "No snapshot found for last pull operation. \
@@ -38,7 +20,6 @@ pub fn undo_pull(history_path: Option<PathBuf>, allowed_base_dir: Option<&Path>)
         )
     })?;
 
-    // Verify snapshot exists
     if !snapshot_path.exists() {
         return Err(anyhow!(
             "Snapshot file not found: {}. \
@@ -47,10 +28,8 @@ pub fn undo_pull(history_path: Option<PathBuf>, allowed_base_dir: Option<&Path>)
         ));
     }
 
-    // Load the snapshot
     let snapshot = Snapshot::load_from_disk(snapshot_path)?;
 
-    // Verify this is indeed a pull snapshot
     if snapshot.operation_type != OperationType::Pull {
         return Err(anyhow!(
             "Snapshot type mismatch: expected pull, found {}",
@@ -58,29 +37,18 @@ pub fn undo_pull(history_path: Option<PathBuf>, allowed_base_dir: Option<&Path>)
         ));
     }
 
-    // Get the list of files that will be restored
     let restored_files: Vec<String> = snapshot.files.keys().cloned().collect();
     let file_count = restored_files.len();
 
-    // TRANSACTION-LIKE ORDERING: Update history FIRST, then restore files.
-    // This ensures that if file restoration fails, the history is still consistent
-    // and accurately reflects that we've attempted the undo. The snapshot file
-    // remains on disk until we successfully complete the restoration.
-
-    // Step 1: Remove the pull operation from history
     let mut history = OperationHistory::from_path(history_path.clone())?;
     history
         .remove_last_operation_by_type(OperationType::Pull, history_path.clone())
         .context("Failed to remove pull operation from history")?;
 
-    // Step 2: Restore the snapshot files
-    // If this fails, the history is already updated (which is safer than having
-    // an inconsistent history state)
     snapshot
         .restore_with_base(allowed_base_dir)
         .context("Failed to restore snapshot")?;
 
-    // Step 3: Clean up the snapshot file (only after successful restoration)
     if let Err(e) = fs::remove_file(snapshot_path) {
         eprintln!(
             "Warning: Failed to remove snapshot file {}: {}",
@@ -98,41 +66,16 @@ pub fn undo_pull(history_path: Option<PathBuf>, allowed_base_dir: Option<&Path>)
     ))
 }
 
-/// Undo the last push operation
-///
-/// This function:
-/// 1. Loads the operation history
-/// 2. Finds the most recent push operation
-/// 3. Gets the commit hash from the operation record (no snapshot needed!)
-/// 4. Soft-resets the repository to the previous commit
-/// 5. Updates the operation history to mark the push as undone
-/// 6. Warns the user if they need to force push to the remote
-///
-/// Note: Push operations no longer create file snapshots. Git already
-/// tracks history, so we just store the commit hash and use `reset` to undo.
-///
-/// # Arguments
-/// * `repo_path` - Path to the git repository
-/// * `history_path` - Optional custom path for operation history (for testing)
-///
-/// # Returns
-/// A summary message describing what was undone and any required follow-up actions
 pub fn undo_push(repo_path: &Path, history_path: Option<PathBuf>) -> Result<String> {
-    // Load operation history
     let history = OperationHistory::from_path(history_path.clone())?;
 
-    // Find the last push operation
     let last_push = history
         .get_last_operation_by_type(OperationType::Push)
         .ok_or_else(|| anyhow!("No push operation found in history to undo"))?;
 
-    // Get the commit hash to reset to
-    // New operations store this in commit_hash field directly
-    // Legacy operations may have it in a snapshot file
     let target_commit = if let Some(ref hash) = last_push.commit_hash {
         hash.clone()
     } else if let Some(ref snapshot_path) = last_push.snapshot_path {
-        // Legacy: load from snapshot file
         if !snapshot_path.exists() {
             return Err(anyhow!(
                 "No commit hash in operation record and snapshot file not found: {}",
@@ -152,34 +95,23 @@ pub fn undo_push(repo_path: &Path, history_path: Option<PathBuf>) -> Result<Stri
     let repo = GitRepo::open(repo_path)
         .with_context(|| format!("Failed to open repository at {}", repo_path.display()))?;
 
-    // Check if we need to warn about remote (before reset)
     let branch_name = last_push.branch.as_deref().unwrap_or("unknown");
     let needs_force_push = repo.has_remote("origin");
 
-    // TRANSACTION-LIKE ORDERING: Update history FIRST, then perform reset.
-    // This ensures that if the reset fails, the history is still consistent.
-
-    // Step 1: Remove the push operation from history
     let mut history = OperationHistory::from_path(history_path.clone())?;
     history
         .remove_last_operation_by_type(OperationType::Push, history_path.clone())
         .context("Failed to remove push operation from history")?;
 
-    // Step 2: Perform the reset
     repo.reset_soft(&target_commit)
         .context("Failed to reset repository to previous commit")?;
 
-    // The repository now holds less than this machine's record of what it
-    // synced, and the next pull would read the difference as deletions made
-    // elsewhere. Forgetting the record puts this machine where a fresh clone
-    // is: it deletes nothing and re-learns on the next sync.
     if let Ok(claude_dir) = crate::sync::discovery::claude_home_dir() {
         if let Err(e) = crate::artifacts::tracked::forget(&claude_dir, repo_path) {
             log::warn!("Failed to reset the artifact sync record: {e}");
         }
     }
 
-    // Step 3: Clean up legacy snapshot file if it exists
     if let Some(ref snapshot_path) = last_push.snapshot_path {
         if snapshot_path.exists() {
             if let Err(e) = fs::remove_file(snapshot_path) {
@@ -297,7 +229,6 @@ mod tests {
 
         let initial_hash = repo.current_commit_hash().unwrap();
 
-        // Commit something on top, simulating the push we're about to undo.
         let new_file = temp_dir.path().join("new.txt");
         fs::write(&new_file, "new content").unwrap();
         repo.stage_all().unwrap();
@@ -339,7 +270,6 @@ mod tests {
         let history_path = temp_dir.path().join("history.json");
         let snapshots_dir = temp_dir.path().join("snapshots");
 
-        // A push snapshot with no commit hash: there is nothing to reset to.
         let mut snapshot = metadata_only_snapshot(
             &Uuid::new_v4().to_string(),
             OperationType::Push,
@@ -379,7 +309,6 @@ mod tests {
         let snapshot2 = Snapshot::create(OperationType::Pull, vec![&file1], None).unwrap();
         let snapshot_path2 = snapshot2.save_to_disk(Some(&snapshots_dir)).unwrap();
 
-        // Pull, then push, then pull. Undoing should take only the last pull.
         HistoryBuilder::new(&history_path)
             .push(OperationType::Pull, "main", Some(&snapshot_path1))
             .push(OperationType::Push, "main", None)
@@ -391,8 +320,6 @@ mod tests {
         let result = undo_pull(Some(history_path.clone()), Some(temp_dir.path())).unwrap();
         assert!(result.contains("Successfully undone"));
 
-        // Most recent first: the push, then the earlier pull. Only the newest
-        // pull was consumed.
         assert_eq!(
             operation_types(&history_path),
             vec![OperationType::Push, OperationType::Pull],
@@ -437,8 +364,6 @@ mod tests {
 
     #[test]
     fn test_undo_pull_transaction_safety() {
-        // History is updated BEFORE files are restored, so that a failure to
-        // restore can't leave a consumed snapshot still listed as undoable.
         let temp_dir = tempdir().unwrap();
         let history_path = temp_dir.path().join("history.json");
         let snapshots_dir = temp_dir.path().join("snapshots");
@@ -455,18 +380,16 @@ mod tests {
 
         fs::write(&file1, "modified by pull").unwrap();
 
-        // Make restoration as likely to fail as we portably can.
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
             let mut perms = fs::metadata(&file1).unwrap().permissions();
-            perms.set_mode(0o444); // read-only
+            perms.set_mode(0o444);
             fs::set_permissions(&file1, perms).unwrap();
         }
 
         let result = undo_pull(Some(history_path.clone()), Some(temp_dir.path()));
 
-        // Whether or not restoration succeeded, history must already be updated.
         assert_eq!(
             operation_count(&history_path),
             0,
@@ -480,7 +403,6 @@ mod tests {
             );
         }
 
-        // Restore write permission so the TempDir can be removed.
         #[cfg(unix)]
         if file1.exists() {
             use std::os::unix::fs::PermissionsExt;
@@ -492,7 +414,6 @@ mod tests {
 
     #[test]
     fn test_undo_push_transaction_safety() {
-        // Same ordering guarantee as the pull case: history first, reset second.
         let (temp_dir, repo) = setup_test_repo();
         let history_path = temp_dir.path().join("history.json");
         let snapshots_dir = temp_dir.path().join("snapshots");

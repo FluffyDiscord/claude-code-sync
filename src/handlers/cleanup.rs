@@ -1,7 +1,3 @@
-//! Snapshot cleanup handler
-//!
-//! Handles cleaning up old snapshot files based on age and count limits.
-
 use anyhow::{Context, Result};
 use colored::Colorize;
 use inquire::Confirm;
@@ -11,7 +7,6 @@ use crate::history::OperationType;
 use crate::interactive_conflict;
 use crate::undo;
 
-/// Handle cleanup snapshots command
 pub fn handle_cleanup_snapshots(
     dry_run: bool,
     max_count: usize,
@@ -32,12 +27,10 @@ pub fn handle_cleanup_snapshots(
         println!();
     }
 
-    // In interactive or verbose mode, show detailed information about snapshots
     if interactive || verbosity == crate::VerbosityLevel::Verbose {
         show_snapshot_details(max_count, max_age_days, verbosity)?;
     }
 
-    // If interactive mode and not dry run, ask for confirmation
     if interactive && !dry_run && interactive_conflict::is_interactive() {
         let confirm = Confirm::new("Delete these snapshots? (permanent)")
             .with_default(false)
@@ -86,7 +79,6 @@ pub fn handle_cleanup_snapshots(
     Ok(())
 }
 
-/// Show detailed information about snapshots before cleanup
 fn show_snapshot_details(
     max_count: usize,
     max_age_days: i64,
@@ -99,7 +91,6 @@ fn show_snapshot_details(
         return Ok(());
     }
 
-    // Collect all snapshots with metadata
     let mut pull_snapshots: Vec<(std::path::PathBuf, chrono::DateTime<chrono::Utc>, u64)> =
         Vec::new();
     let mut push_snapshots: Vec<(std::path::PathBuf, chrono::DateTime<chrono::Utc>, u64)> =
@@ -116,7 +107,6 @@ fn show_snapshot_details(
         let metadata = fs::metadata(&path)?;
         let file_size = metadata.len();
 
-        // Load snapshot metadata
         if let Ok(content) = fs::read_to_string(&path) {
             if let Ok(snapshot) = serde_json::from_str::<undo::Snapshot>(&content) {
                 match snapshot.operation_type {
@@ -131,18 +121,15 @@ fn show_snapshot_details(
         }
     }
 
-    // Sort by timestamp descending (newest first)
     pull_snapshots.sort_by_key(|s| std::cmp::Reverse(s.1));
     push_snapshots.sort_by_key(|s| std::cmp::Reverse(s.1));
 
-    // Calculate which ones will be kept/deleted
     let now = chrono::Utc::now();
     let age_threshold = now - chrono::Duration::days(max_age_days);
 
     println!("{}", "Current Snapshot Inventory:".bold().cyan());
     println!("{}", "=".repeat(80).cyan());
 
-    // Show pull snapshots
     println!(
         "\n{} ({} total)",
         "Pull Snapshots:".bold().green(),
@@ -193,7 +180,6 @@ fn show_snapshot_details(
         );
     }
 
-    // Show push snapshots
     println!(
         "\n{} ({} total)",
         "Push Snapshots:".bold().blue(),
@@ -244,7 +230,6 @@ fn show_snapshot_details(
         );
     }
 
-    // Summary
     println!("\n{}", "Summary:".bold());
     let total_keep = pull_keep_count + push_keep_count;
     let total_delete = pull_delete_count + push_delete_count;

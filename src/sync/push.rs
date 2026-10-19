@@ -19,19 +19,13 @@ use super::discovery::{
 use super::state::SyncState;
 use super::MAX_CONVERSATIONS_TO_DISPLAY;
 
-/// One session's planned copy into the sync repository.
 #[derive(Debug, Clone)]
 pub struct PlannedSessionPush {
-    /// Index into the discovered sessions slice this entry refers to
     pub session_index: usize,
-    /// Destination path relative to the sync repo's projects directory
     pub relative_path: PathBuf,
-    /// How the session differs from what the sync repository already holds
     pub operation: SyncOperation,
 }
 
-/// Read-only classification of a push: which sessions land where, and how they
-/// differ from what the sync repository already contains.
 #[derive(Debug, Default)]
 pub struct PushPlan {
     pub entries: Vec<PlannedSessionPush>,
@@ -41,22 +35,16 @@ pub struct PushPlan {
     pub skipped_no_cwd: usize,
 }
 
-/// Outcome counts of a completed push, returned to callers and tests.
-#[allow(dead_code)] // fields are read via the library target; the bin compiles this module separately
+#[allow(dead_code)]
 #[derive(Debug, Default)]
 pub struct PushReport {
     pub added: usize,
     pub modified: usize,
     pub unchanged: usize,
     pub skipped_no_cwd: usize,
-    /// Per-category artifact outcomes (empty when no category is enabled).
     pub artifacts: crate::artifacts::engine::ArtifactReport,
 }
 
-/// Compute a session's destination path relative to the projects directory: a
-/// mapped project goes under its canonical id, otherwise `use_project_name_only`
-/// and the plain encoded path decide, exactly as before. Returns None when the
-/// session lacks the `cwd` needed for project-name mapping.
 fn compute_relative_path(
     session: &crate::parser::ConversationSession,
     claude_dir: &Path,
@@ -74,10 +62,6 @@ fn compute_relative_path(
     }
 
     if filter.use_project_name_only {
-        // The session's own cwd, not the encoded directory: its last segment
-        // is the project's folder name, which a `-` inside that name would
-        // otherwise truncate ("shop-web" -> "web"). The rest of the path is
-        // kept, so a session's subagent transcripts stay under it.
         let project_name = session.project_name()?;
         return Some(PathBuf::from(project_name).join(parts.as_path()));
     }
@@ -85,12 +69,6 @@ fn compute_relative_path(
     Some(full_relative.to_path_buf())
 }
 
-/// Whether applying this plan entry still has to write the transcript.
-///
-/// An unchanged session already sits in the repository, and copying it again
-/// would rewrite bytes git then has to store for no change: a transcript an
-/// older version wrote is normalized JSON, byte for byte different from the
-/// verbatim copy made today while holding the very same conversation.
 pub fn needs_copy(entry: &PlannedSessionPush, dest_path: &Path) -> bool {
     if entry.operation != SyncOperation::Unchanged {
         return true;
@@ -98,11 +76,6 @@ pub fn needs_copy(entry: &PlannedSessionPush, dest_path: &Path) -> bool {
     !dest_path.exists()
 }
 
-/// Classify every discovered session against the sync repository's current
-/// contents without writing anything. Sessions are keyed by their destination
-/// path, so files sharing an interior sessionId (subagent sidechains, resumed
-/// sessions, issue #68) or a filename stem (workflow `journal.jsonl`s)
-/// classify independently.
 pub fn plan_push(
     sessions: &[crate::parser::ConversationSession],
     claude_dir: &Path,
@@ -155,7 +128,6 @@ pub fn plan_push(
     Ok(plan)
 }
 
-/// Push local Claude Code history to sync repository
 pub fn push_history(
     commit_message: Option<&str>,
     push_remote: bool,
@@ -181,12 +153,10 @@ pub fn push_history(
     }
     let mut filter = FilterConfig::load()?;
 
-    // Override exclude_attachments if specified in command
     if exclude_attachments {
         filter.exclude_attachments = true;
     }
 
-    // Set up LFS if enabled
     if filter.enable_lfs {
         if verbosity != VerbosityLevel::Quiet {
             println!("  {} Git LFS...", "Configuring".cyan());
@@ -199,19 +169,15 @@ pub fn push_history(
 
     let claude_dir = claude_projects_dir()?;
 
-    // Get the current branch name for operation record
     let branch_name = branch
         .map(|s| s.to_string())
         .or_else(|| repo.current_branch().ok())
         .unwrap_or_else(|| "main".to_string());
 
-    // Discover all sessions
     println!("  {} conversation sessions...", "Discovering".cyan());
     let sessions = discover_sessions(&claude_dir, &filter)?;
     println!("  {} {} sessions", "Found".green(), sessions.len());
 
-    // Check for project name collisions when using project-name-only mode;
-    // with mapped projects only, every synced project goes under its map id.
     let names_can_collide = filter.use_project_name_only && !filter.mapped_projects_only;
     if names_can_collide {
         let collisions = find_colliding_projects(&claude_dir);
@@ -245,13 +211,9 @@ pub fn push_history(
         }
     }
 
-    // ============================================================================
-    // COPY SESSIONS AND TRACK CHANGES
-    // ============================================================================
     let projects_dir = state.sync_repo_path.join(&filter.sync_subdirectory);
     fs::create_dir_all(&projects_dir)?;
 
-    // Classify every session against the sync repo, then apply the plan
     println!("  {} sessions to sync repository...", "Copying".cyan());
     let plan = plan_push(&sessions, &claude_dir, &projects_dir, &filter)?;
     let added_count = plan.added;
@@ -259,7 +221,6 @@ pub fn push_history(
     let unchanged_count = plan.unchanged;
     let skipped_no_cwd = plan.skipped_no_cwd;
 
-    // Track pushed conversations for operation record
     let mut pushed_conversations: Vec<ConversationSummary> = Vec::new();
 
     let progress = crate::progress::bar(plan.entries.len(), "Copying sessions");
@@ -271,7 +232,6 @@ pub fn push_history(
             session.copy_to(&dest_path)?;
         }
 
-        // Track this session in pushed conversations
         let relative_path_str = entry.relative_path.to_string_lossy().to_string();
         match ConversationSummary::new(
             session.session_id.clone(),
@@ -285,9 +245,6 @@ pub fn push_history(
         }
     }
 
-    // ============================================================================
-    // COPY ARTIFACTS (settings, skills, agents, ...) AND WRITE IGNORE GUARD
-    // ============================================================================
     let artifact_report = crate::artifacts::engine::push_artifacts(
         &claude_home_dir()?,
         &state.sync_repo_path,
@@ -300,9 +257,6 @@ pub fn push_history(
     )?;
     crate::artifacts::engine::ensure_ignore_files(&state.sync_repo_path)?;
 
-    // ============================================================================
-    // SHOW SUMMARY AND INTERACTIVE CONFIRMATION
-    // ============================================================================
     if verbosity != VerbosityLevel::Quiet {
         println!();
         println!("{}", "Push Summary:".bold().cyan());
@@ -329,7 +283,6 @@ pub fn push_history(
         println!();
     }
 
-    // Show detailed file list in verbose mode
     if verbosity == VerbosityLevel::Verbose {
         println!("{}", "Files to be pushed:".bold());
         for (idx, entry) in plan.entries.iter().enumerate().take(20) {
@@ -352,7 +305,6 @@ pub fn push_history(
         println!();
     }
 
-    // Interactive confirmation
     if interactive && interactive_conflict::is_interactive() {
         let confirm = Confirm::new("Push?")
             .with_default(true)
@@ -365,20 +317,12 @@ pub fn push_history(
         }
     }
 
-    // ============================================================================
-    // COMMIT AND PUSH CHANGES
-    // ============================================================================
     crate::progress::while_spinning(format!("{} changes...", "Staging".cyan()), || {
         repo.stage_all()
     })?;
 
     let has_changes = repo.has_changes()?;
     if has_changes {
-        // Get the current commit hash before making any changes
-        // This allows us to undo the push later by resetting to this commit
-        // Note: We don't create file snapshots for push - git already has history!
-        // Undo push simply does `git reset` to this commit.
-        // On a brand new repo with no commits, this will be None (no undo available for first push)
         let commit_before_push = repo.current_commit_hash().ok();
 
         if let Some(ref hash) = commit_before_push {
@@ -403,7 +347,6 @@ pub fn push_history(
         repo.commit(message)?;
         println!("  {} Committed: {}", "✓".green(), message);
 
-        // Push to remote if configured
         if push_remote && state.has_remote {
             println!("  {} to remote...", "Pushing".cyan());
 
@@ -413,21 +356,15 @@ pub fn push_history(
             }
         }
 
-        // ============================================================================
-        // CREATE AND SAVE OPERATION RECORD
-        // ============================================================================
         let mut operation_record = OperationRecord::new(
             OperationType::Push,
             Some(branch_name.clone()),
             pushed_conversations.clone(),
         );
 
-        // Store commit hash for undo (no file snapshot needed - git has history)
-        // On first push (no prior commits), this will be None
         operation_record.commit_hash = commit_before_push;
         operation_record.artifact_counts = artifact_report.counts.clone();
 
-        // Load operation history and add this operation
         let mut history = match OperationHistory::load() {
             Ok(h) => h,
             Err(e) => {
@@ -445,12 +382,8 @@ pub fn push_history(
         println!("  {} No changes to commit", "Note:".yellow());
     }
 
-    // ============================================================================
-    // DISPLAY SUMMARY TO USER
-    // ============================================================================
     println!("\n{}", "=== Push Summary ===".bold().cyan());
 
-    // Show operation statistics
     let stats_msg = format!(
         "  {} Added    {} Modified    {} Unchanged",
         format!("{added_count}").green(),
@@ -460,10 +393,8 @@ pub fn push_history(
     println!("{stats_msg}");
     println!();
 
-    // Group conversations by project (top-level directory)
     let mut by_project: HashMap<String, Vec<&ConversationSummary>> = HashMap::new();
     for conv in &pushed_conversations {
-        // Skip unchanged conversations in detailed output
         if conv.operation == SyncOperation::Unchanged {
             continue;
         }
@@ -477,7 +408,6 @@ pub fn push_history(
         by_project.entry(project).or_default().push(conv);
     }
 
-    // Display conversations grouped by project
     if !by_project.is_empty() {
         println!("{}", "Pushed Conversations:".bold());
 
@@ -499,10 +429,7 @@ pub fn push_history(
                 let timestamp_str = conv
                     .timestamp
                     .as_ref()
-                    .and_then(|t| {
-                        // Extract just the date portion for compact display
-                        t.split('T').next()
-                    })
+                    .and_then(|t| t.split('T').next())
                     .unwrap_or("unknown");
 
                 println!(
@@ -532,7 +459,6 @@ pub fn push_history(
         println!("\n{}", "Push complete!".green().bold());
     }
 
-    // Clean up old snapshots automatically
     if let Err(e) = crate::undo::cleanup_old_snapshots(None, false) {
         log::warn!("Failed to cleanup old snapshots: {}", e);
     }

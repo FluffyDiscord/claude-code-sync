@@ -1,6 +1,3 @@
-//! Repository initialization: the onboarding flow, the `--repo` flag, cloning,
-//! and `claude-code-sync-init.toml` validation.
-
 mod common;
 
 use anyhow::Result;
@@ -13,10 +10,6 @@ use common::ConfigEnv;
 use serial_test::serial;
 use std::io::Write;
 use tempfile::TempDir;
-
-// ---------------------------------------------------------------------------
-// init_from_onboarding
-// ---------------------------------------------------------------------------
 
 #[test]
 #[serial]
@@ -58,7 +51,6 @@ fn test_init_from_onboarding_sets_is_cloned_flag() -> Result<()> {
     let env = ConfigEnv::new();
     let repo_path = env.join("cloned-repo-test");
 
-    // Simulating the post-clone state.
     GitRepo::init(&repo_path)?;
     sync::init_from_onboarding(&repo_path, Some("https://github.com/user/repo.git"), true)?;
 
@@ -92,10 +84,6 @@ fn test_init_from_onboarding_local_repo_not_cloned() -> Result<()> {
 
     Ok(())
 }
-
-// ---------------------------------------------------------------------------
-// init_sync_repo (the `--repo` flag) also has to create a FilterConfig
-// ---------------------------------------------------------------------------
 
 #[test]
 #[serial]
@@ -132,7 +120,7 @@ fn test_init_sync_repo_with_remote_creates_filter_config() -> Result<()> {
     let state = SyncState::load()?;
     assert_eq!(state.sync_repo_path, repo_path);
     assert!(state.has_remote);
-    assert!(!state.is_cloned_repo); // Not cloned, just added as origin
+    assert!(!state.is_cloned_repo);
 
     assert!(
         ConfigManager::filter_config_path()?.exists(),
@@ -170,10 +158,6 @@ fn test_init_sync_repo_does_not_overwrite_existing_filter_config() -> Result<()>
 
     Ok(())
 }
-
-// ---------------------------------------------------------------------------
-// Cloning
-// ---------------------------------------------------------------------------
 
 #[test]
 fn test_git_clone_validates_path() -> Result<()> {
@@ -215,18 +199,12 @@ fn test_clone_creates_parent_directories() -> Result<()> {
         &nested_path,
     );
 
-    // The clone fails, but the parent directories should have been created first.
     assert!(result.is_err());
     assert!(nested_path.parent().unwrap().exists());
 
     Ok(())
 }
 
-// ---------------------------------------------------------------------------
-// InitConfig validation
-// ---------------------------------------------------------------------------
-
-/// Write an init TOML into `dir` and try to load it.
 fn load_init_config(dir: &TempDir, body: &str) -> Result<InitConfig> {
     let config_path = dir.path().join("init.toml");
     let mut file = std::fs::File::create(&config_path)?;

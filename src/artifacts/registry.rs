@@ -1,10 +1,5 @@
-//! The category registry: one row per syncable artifact kind. Everything the
-//! engine does — collecting sources, choosing repo destinations, picking a
-//! merge strategy — is driven by this data.
-
 use serde::{Deserialize, Serialize};
 
-/// Identifies one syncable artifact category.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum CategoryId {
@@ -19,75 +14,42 @@ pub enum CategoryId {
     Plans,
     Todos,
     PromptHistory,
-    /// Non-JSONL files inside `~/.claude/projects/` (images, PDFs, per-project
-    /// memory). Gated by `!exclude_attachments` instead of a toggle, honoring
-    /// the long-documented attachments contract.
     ProjectAttachments,
 }
 
-/// What to copy, relative to `~/.claude`. Missing sources are treated as
-/// empty, never as an error — a machine may simply not have e.g. `todos/`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SourceSpec {
-    /// Exact files. Anything not listed is structurally unreachable — this is
-    /// how `plugins/` syncs its two manifests but never `cache/`.
     Files(&'static [&'static str]),
-    /// A directory walked recursively (symlinks not followed).
     Dir(&'static str),
 }
 
-/// How pull reconciles a repo copy with the local file.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MergeStrategy {
-    /// Remote bytes win (only written when they differ; snapshot first).
     RawOverwrite,
-    /// Line-wise union of both sides (append-only JSONL like history.jsonl);
-    /// applied on push and pull so machines converge grow-only.
     UnionJsonl,
-    /// Union of `MEMORY.md` indexes by link target, applied on push and pull;
-    /// every other file in the category raw-overwrites. Overwriting an index
-    /// with a sparser one orphans the other machine's memory files.
     UnionMemoryIndex,
 }
 
-/// Where a category's files live inside the sync repository.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DestRoot {
-    /// `<repo>/artifacts/<repo_subdir>/...` — the default for all categories.
     Artifacts,
-    /// `<repo>/<sync_subdirectory>/...` — shares the session tree (used only
-    /// by project attachments, which live beside their transcripts).
     SessionTree,
 }
 
-/// One registry row.
 #[derive(Debug)]
 pub struct CategoryDescriptor {
     pub id: CategoryId,
-    /// Config key / CLI name (kebab-case).
     pub name: &'static str,
-    /// Subdirectory under the sync repo's `artifacts/` root (unused for
-    /// `DestRoot::SessionTree`).
     pub repo_subdir: &'static str,
     pub source: SourceSpec,
     pub merge: MergeStrategy,
     pub dest: DestRoot,
-    /// File extensions this category never copies (e.g. attachments skip
-    /// `.jsonl`, which belongs to the session pipeline).
     pub exclude_extensions: &'static [&'static str],
-    /// Rewrite this machine's absolute paths to tokens into the repo and back
-    /// out. For config files that embed paths; user content is stored verbatim.
     pub tokenize_paths: bool,
-    /// Propagate deletions: a file this machine synced before and no longer has
-    /// is removed from the other side. Only for curated directories.
     pub mirror_deletes: bool,
-    /// Short human description for wizard / config --show.
     pub description: &'static str,
 }
 
-/// Root directory inside the sync repository for all artifact categories.
-/// Deliberately a constant: a fixed category→path mapping keeps pull
-/// deterministic and the deny-guarantee auditable.
 pub const ARTIFACTS_SUBDIR: &str = "artifacts";
 
 pub static REGISTRY: &[CategoryDescriptor] = &[
@@ -240,9 +202,6 @@ pub static REGISTRY: &[CategoryDescriptor] = &[
     },
 ];
 
-/// Per-category enable switches, stored in the `[sync_artifacts]` table of
-/// config.toml. Every field defaults to false so configs written by older
-/// versions parse unchanged and existing users opt in explicitly.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ArtifactToggles {
     #[serde(default)]
@@ -270,7 +229,6 @@ pub struct ArtifactToggles {
 }
 
 impl ArtifactToggles {
-    /// A toggles value with every category enabled, `hooks` included.
     pub fn all_enabled() -> Self {
         Self {
             settings: true,
@@ -287,9 +245,6 @@ impl ArtifactToggles {
         }
     }
 
-    /// Every category except `hooks` (used by onboarding defaults and the
-    /// `all` CLI shorthand). Hooks run whatever the sync repository hands
-    /// them, so they are only ever switched on by name.
     pub fn all_but_hooks() -> Self {
         Self {
             hooks: false,
@@ -297,12 +252,10 @@ impl ArtifactToggles {
         }
     }
 
-    /// Whether any category is enabled at all.
     pub fn any_enabled(&self) -> bool {
         REGISTRY.iter().any(|d| self.is_enabled(d.id))
     }
 
-    /// Read the switch for one category.
     pub fn is_enabled(&self, id: CategoryId) -> bool {
         match id {
             CategoryId::Settings => self.settings,
@@ -316,13 +269,10 @@ impl ArtifactToggles {
             CategoryId::Plans => self.plans,
             CategoryId::Todos => self.todos,
             CategoryId::PromptHistory => self.prompt_history,
-            // Attachments are gated by FilterConfig::exclude_attachments, not
-            // by a toggle; as a toggle they always read as off.
             CategoryId::ProjectAttachments => false,
         }
     }
 
-    /// Flip the switch for one category.
     pub fn set_enabled(&mut self, id: CategoryId, value: bool) {
         match id {
             CategoryId::Settings => self.settings = value,
@@ -341,21 +291,17 @@ impl ArtifactToggles {
     }
 }
 
-/// Look up a descriptor by its CLI/config name (kebab-case).
 pub fn find_by_name(name: &str) -> Option<&'static CategoryDescriptor> {
     REGISTRY.iter().find(|d| d.name == name)
 }
 
-/// Registry rows driven by ArtifactToggles — everything except attachments,
-/// which the long-standing exclude_attachments flag governs.
 pub fn toggleable() -> impl Iterator<Item = &'static CategoryDescriptor> {
     REGISTRY
         .iter()
         .filter(|d| d.id != CategoryId::ProjectAttachments)
 }
 
-/// All registry rows whose toggle is on.
-#[allow(dead_code)] // used via the library target; the bin compiles this module separately
+#[allow(dead_code)]
 pub fn enabled_categories(toggles: &ArtifactToggles) -> Vec<&'static CategoryDescriptor> {
     REGISTRY
         .iter()
@@ -411,8 +357,6 @@ mod tests {
             .unwrap();
         assert_eq!(ph.merge, MergeStrategy::UnionJsonl);
         assert_eq!(ph.source, SourceSpec::Files(&["history.jsonl"]));
-        // Only project attachments, which carry per-project MEMORY.md indexes,
-        // merge as well; everything else raw-overwrites.
         for d in REGISTRY
             .iter()
             .filter(|d| d.id != CategoryId::PromptHistory && d.id != CategoryId::ProjectAttachments)
@@ -489,7 +433,6 @@ mod tests {
             assert!(toggles.is_enabled(d.id), "{} can be enabled", d.name);
         }
         assert_eq!(toggles, ArtifactToggles::all_enabled());
-        // Attachments are flag-governed, not toggleable.
         assert!(!toggles.is_enabled(CategoryId::ProjectAttachments));
         toggles.set_enabled(CategoryId::ProjectAttachments, true);
         assert!(!toggles.is_enabled(CategoryId::ProjectAttachments));
@@ -507,8 +450,6 @@ mod tests {
 
     #[test]
     fn test_old_config_without_toggles_parses_all_off() {
-        // Backward compat: a config.toml written before this feature has no
-        // [sync_artifacts] table; deserializing must yield all-false.
         let toggles: ArtifactToggles = toml::from_str("").unwrap();
         assert_eq!(toggles, ArtifactToggles::default());
         assert!(!toggles.any_enabled());

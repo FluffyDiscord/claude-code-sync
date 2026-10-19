@@ -9,7 +9,6 @@ use std::time::SystemTime;
 use crate::config::ConfigManager;
 use crate::parser::ConversationSession;
 
-/// A transcript's summary, valid while the file keeps this length and mtime.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct CachedSummary {
     length: u64,
@@ -17,11 +16,6 @@ pub(crate) struct CachedSummary {
     pub(crate) session: ConversationSession,
 }
 
-/// Transcript summaries from earlier runs, so a sync reads only the
-/// transcripts that changed since — the way git's index skips unchanged files.
-///
-/// Purely a speed-up: a cache that cannot be read or written costs a full
-/// read of the history, never a failed sync.
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub(crate) struct SummaryCache {
     version: String,
@@ -29,8 +23,6 @@ pub(crate) struct SummaryCache {
 }
 
 impl SummaryCache {
-    /// The summaries the last run saved, or none when they are missing,
-    /// unreadable, or written by another version of this tool.
     pub(crate) fn load() -> Self {
         let cache = match Self::read() {
             Ok(cache) => cache,
@@ -53,8 +45,6 @@ impl SummaryCache {
         Ok(serde_json::from_slice(&contents)?)
     }
 
-    /// The transcript's summary: the cached one while the file is unchanged,
-    /// a fresh read otherwise.
     pub(crate) fn summarize(&self, path: &Path) -> Result<CachedSummary> {
         let metadata = fs::metadata(path)
             .with_context(|| format!("Failed to read metadata of {}", path.display()))?;
@@ -78,8 +68,6 @@ impl SummaryCache {
         })
     }
 
-    /// Replace everything cached under `base_path` with this walk's
-    /// summaries, forget files that no longer exist, and write it out.
     pub(crate) fn save(mut self, base_path: &Path, summaries: &[CachedSummary]) {
         self.entries.retain(|path, _| {
             let rewalked = path.starts_with(base_path);

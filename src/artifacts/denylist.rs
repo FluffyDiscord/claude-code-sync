@@ -1,13 +1,5 @@
-//! Hardcoded never-sync rules for artifact copies.
-//!
-//! These are enforced at the single copy chokepoint in both directions: on
-//! push nothing denied leaves the machine, and on pull a poisoned sync repo
-//! cannot plant a denied file (or escape `~/.claude`). No user configuration
-//! is consulted here — there is deliberately no way to override this list.
-
 use std::path::Path;
 
-/// Exact file names that must never sync, regardless of location.
 const DENIED_FILE_NAMES: &[&str] = &[
     ".credentials.json",
     "settings.local.json",
@@ -17,14 +9,10 @@ const DENIED_FILE_NAMES: &[&str] = &[
     "mcp-needs-auth-cache.json",
 ];
 
-/// File extensions that must never sync (key material).
 const DENIED_EXTENSIONS: &[&str] = &["pem", "key"];
 
-/// Name prefixes that must never sync (`.env*`, `daemon`, `daemon.lock`, ...).
 const DENIED_NAME_PREFIXES: &[&str] = &[".env", "daemon"];
 
-/// Directory names that are machine-local or cache-like; any path containing
-/// one of these components is denied.
 const DENIED_DIR_COMPONENTS: &[&str] = &[
     "shell-snapshots",
     "session-env",
@@ -38,12 +26,9 @@ const DENIED_DIR_COMPONENTS: &[&str] = &[
     ".trash",
 ];
 
-/// Returns true when a `~/.claude`-relative path must never be copied by
-/// artifact sync, checking every path component against the deny rules.
 pub fn is_denied(rel_path: &Path) -> bool {
     for component in rel_path.components() {
         let Some(name) = component.as_os_str().to_str() else {
-            // Non-UTF-8 component: refuse rather than guess.
             return true;
         };
 
@@ -71,8 +56,6 @@ pub fn is_denied(rel_path: &Path) -> bool {
     false
 }
 
-/// Returns true when a repo-relative path is unsafe to restore: absolute,
-/// or containing `..`/prefix components that could escape the target root.
 pub fn is_unsafe_rel_path(rel_path: &Path) -> bool {
     use std::path::Component;
 
@@ -102,7 +85,7 @@ mod tests {
     fn test_denies_key_material_by_extension() {
         assert!(is_denied(Path::new("id_rsa.pem")));
         assert!(is_denied(Path::new("skills/deploy/host.key")));
-        assert!(is_denied(Path::new("agents/x/cert.PEM"))); // case-insensitive
+        assert!(is_denied(Path::new("agents/x/cert.PEM")));
     }
 
     #[test]
@@ -152,7 +135,6 @@ mod tests {
         assert!(!is_denied(Path::new("plans/2026-07-12-refactor.md")));
         assert!(!is_denied(Path::new("todos/session-123.json")));
         assert!(!is_denied(Path::new("history.jsonl")));
-        // A file merely *containing* a denied word is fine
         assert!(!is_denied(Path::new("skills/env-setup/guide.md")));
         assert!(!is_denied(Path::new("plans/cache-strategy.md")));
         assert!(!is_denied(Path::new("skills/keyboard/keys.md")));

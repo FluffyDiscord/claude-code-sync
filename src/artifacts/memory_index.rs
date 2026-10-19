@@ -1,28 +1,12 @@
-//! Union merge for `MEMORY.md` memory indexes.
-//!
-//! An index is one line per memory (`- [Title](file.md) — hook`), listing what
-//! that machine knows about. Overwriting would let a sparser index orphan
-//! another machine's memory files, so both directions union instead: entries
-//! are keyed by link target, the incoming side wins per entry, and entries the
-//! destination lacks are appended.
-//!
-//! The destination keeps its own headings, blank lines, prose and entry order,
-//! since this rewrites a hand-edited file. Only entry lines cross between
-//! machines. Merging only adds or updates a line, so repeating it changes
-//! nothing and two machines converge.
-
 use std::collections::{BTreeMap, BTreeSet};
 
-/// The file name whose contents are union-merged rather than overwritten.
 pub const MEMORY_INDEX_FILE: &str = "MEMORY.md";
 
-/// One line of an index: an entry carries the link target it is keyed by.
 enum IndexLine {
     Entry { target: String, text: String },
     Other(String),
 }
 
-/// True when this path's file name is a memory index.
 pub fn is_memory_index(path: &std::path::Path) -> bool {
     path.file_name().map(|name| name == MEMORY_INDEX_FILE) == Some(true)
 }
@@ -46,8 +30,6 @@ fn parse(text: &str) -> Vec<IndexLine> {
         .collect()
 }
 
-/// Merge `incoming` into `dest`, returning the merged text and how many entries
-/// `incoming` contributed that `dest` did not have.
 pub fn merge_memory_index(dest: &[u8], incoming: &[u8]) -> (Vec<u8>, usize) {
     let dest_lines = parse(&String::from_utf8_lossy(dest));
     let incoming_lines = parse(&String::from_utf8_lossy(incoming));
@@ -128,7 +110,6 @@ mod tests {
         let mut repo = machine_a.clone();
         let machine_b = b"# Index\n\n- [b](b.md) from B\n".to_vec();
 
-        // B pushes, then pulls; A pulls afterwards.
         repo = merge_memory_index(&repo, &machine_b).0;
         let machine_b = merge_memory_index(&machine_b, &repo).0;
         machine_a = merge_memory_index(&machine_a, &repo).0;
@@ -138,7 +119,6 @@ mod tests {
             assert!(text.contains("[a](a.md)"), "{text}");
             assert!(text.contains("[b](b.md)"), "{text}");
         }
-        // And a second round settles: nothing further is written anywhere.
         assert_eq!(merge_memory_index(&repo, &machine_a).0, repo);
         assert_eq!(merge_memory_index(&machine_a, &repo).0, machine_a);
     }

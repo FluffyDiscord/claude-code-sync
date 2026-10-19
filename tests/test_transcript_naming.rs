@@ -1,7 +1,3 @@
-//! Integration tests for the directory a transcript takes in the sync repo:
-//! the project map, and the `use_project_name_only` fallback it must not
-//! disturb.
-
 mod common;
 
 use std::fs;
@@ -14,8 +10,6 @@ use common::ConfigEnv;
 use serial_test::serial;
 use tempfile::TempDir;
 
-/// One session file under `<projects>/<encoded>/`, whose entries carry `cwd`
-/// the way Claude Code writes them.
 fn seed_session(projects_dir: &Path, encoded: &str, cwd: &str) -> ConversationSession {
     let project_dir = projects_dir.join(encoded);
     fs::create_dir_all(&project_dir).unwrap();

@@ -1,17 +1,13 @@
 use serde::{Deserialize, Serialize};
 
-/// Type of sync operation performed
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum OperationType {
-    /// Pull operation: syncing from remote to local
     Pull,
-    /// Push operation: syncing from local to remote
     Push,
 }
 
 impl OperationType {
-    /// Returns a human-readable string representation
     pub fn as_str(&self) -> &str {
         match self {
             OperationType::Pull => "pull",
@@ -20,22 +16,16 @@ impl OperationType {
     }
 }
 
-/// Type of operation performed on a specific conversation during sync
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum SyncOperation {
-    /// Conversation was newly added
     Added,
-    /// Existing conversation was modified
     Modified,
-    /// Conflict detected that needs resolution
     Conflict,
-    /// Conversation exists but was not changed
     Unchanged,
 }
 
 impl SyncOperation {
-    /// Returns a human-readable string representation
     pub fn as_str(&self) -> &str {
         match self {
             SyncOperation::Added => "added",

@@ -1,7 +1,3 @@
-//! Regression tests for issue #68: pushing twice with no local changes must
-//! report every session as Unchanged, including subagent sidechain transcripts
-//! that carry their parent session's interior `sessionId`.
-
 mod common;
 
 use std::fs;
@@ -31,8 +27,6 @@ fn write_transcript(path: &Path, session_id: &str, marker: &str) {
     .unwrap();
 }
 
-/// Build a claude-projects tree where a parent transcript and two subagent
-/// transcripts all share one interior sessionId (as Claude Code produces).
 fn seed_claude_projects(claude_dir: &Path) {
     let project = claude_dir.join("-home-user-myproj");
     let subagents = project.join(PARENT_SESSION_ID).join("subagents");
@@ -67,20 +61,16 @@ fn test_second_push_plan_is_all_unchanged_despite_shared_session_id() {
     let sessions = discover_sessions(claude.path(), &filter).unwrap();
     assert_eq!(sessions.len(), 3, "parent + two subagents discovered");
 
-    // First push: everything is new.
     let plan1 = plan_push(&sessions, claude.path(), repo_projects.path(), &filter).unwrap();
     assert_eq!(plan1.added, 3);
     assert_eq!(plan1.modified, 0);
     assert_eq!(plan1.unchanged, 0);
 
-    // Apply the plan the way push_history does.
     for entry in &plan1.entries {
         let dest = repo_projects.path().join(&entry.relative_path);
         sessions[entry.session_index].copy_to(&dest).unwrap();
     }
 
-    // Second push with no local changes: issue #68 reported these as Modified
-    // because all three files collapsed onto one sessionId key.
     let sessions2 = discover_sessions(claude.path(), &filter).unwrap();
     let plan2 = plan_push(&sessions2, claude.path(), repo_projects.path(), &filter).unwrap();
     assert_eq!(plan2.added, 0, "second push must add nothing");
@@ -91,9 +81,6 @@ fn test_second_push_plan_is_all_unchanged_despite_shared_session_id() {
     assert_eq!(plan2.unchanged, 3, "all three files are unchanged");
 }
 
-/// An upgrade must not rewrite the whole repository: every transcript an older
-/// version wrote is normalized JSON, which differs byte for byte from the
-/// verbatim copy made today even though the conversation is identical.
 #[test]
 #[serial]
 fn an_unchanged_session_is_left_in_the_repository_as_it_is() {
@@ -106,7 +93,6 @@ fn an_unchanged_session_is_left_in_the_repository_as_it_is() {
     let sessions = discover_sessions(claude.path(), &filter).unwrap();
     let plan = plan_push(&sessions, claude.path(), repo_projects.path(), &filter).unwrap();
 
-    // Fill the repository the way every version before 0.4.3 did.
     for entry in &plan.entries {
         let dest = repo_projects.path().join(&entry.relative_path);
         let entries = sessions[entry.session_index].load_entries().unwrap();
@@ -137,8 +123,6 @@ fn an_unchanged_session_is_left_in_the_repository_as_it_is() {
     assert_eq!(after, normalized, "an unchanged session is not rewritten");
 }
 
-/// Workflow journals carry no sessionId and are all named `journal.jsonl`, so
-/// they share the filename-derived session id `journal`.
 #[test]
 #[serial]
 fn workflow_journals_sharing_a_filename_are_unchanged_on_second_push() {
@@ -197,7 +181,6 @@ fn test_push_plan_detects_real_modification() {
         sessions[entry.session_index].copy_to(&dest).unwrap();
     }
 
-    // Append a new message to ONE subagent transcript only.
     let subagent_path = claude
         .path()
         .join("-home-user-myproj")

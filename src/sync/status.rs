@@ -8,7 +8,6 @@ use crate::git::GitRepo;
 use super::discovery::{claude_projects_dir, discover_sessions};
 use super::state::SyncState;
 
-/// Show sync status
 pub fn show_status(show_conflicts: bool, show_files: bool) -> Result<()> {
     let state = SyncState::load()?;
     let repo = GitRepo::open(&state.sync_repo_path)?;
@@ -18,7 +17,6 @@ pub fn show_status(show_conflicts: bool, show_files: bool) -> Result<()> {
     println!("{}", "=== Claude Code Sync Status ===".bold().cyan());
     println!();
 
-    // Repository info
     println!("{}", "Repository:".bold());
     println!("  Path: {}", state.sync_repo_path.display());
     println!(
@@ -45,7 +43,6 @@ pub fn show_status(show_conflicts: bool, show_files: bool) -> Result<()> {
         );
     }
 
-    // Session counts
     println!();
     println!("{}", "Sessions:".bold());
     let local_sessions = discover_sessions(&claude_dir, &filter)?;
@@ -64,7 +61,6 @@ pub fn show_status(show_conflicts: bool, show_files: bool) -> Result<()> {
         );
     }
 
-    // Artifact categories: enabled state and local-vs-repo drift
     println!();
     println!("{}", "Artifacts:".bold());
     if filter.sync_artifacts.any_enabled() || !filter.exclude_attachments {
@@ -112,7 +108,6 @@ pub fn show_status(show_conflicts: bool, show_files: bool) -> Result<()> {
         log::warn!("{line}");
     }
 
-    // Show files if requested
     if show_files {
         println!();
         println!("{}", "Local session files:".bold());
@@ -132,7 +127,6 @@ pub fn show_status(show_conflicts: bool, show_files: bool) -> Result<()> {
         }
     }
 
-    // Show conflicts if requested
     if show_conflicts {
         println!();
         if let Ok(report) = crate::report::load_latest_report() {
@@ -147,9 +141,6 @@ pub fn show_status(show_conflicts: bool, show_files: bool) -> Result<()> {
     Ok(())
 }
 
-/// The sync-repo transcripts a pull could not place on this machine, grouped
-/// by the project they came from. `status` reports the same misses a pull
-/// would warn about, so the two agree before anything is written.
 fn sessions_without_local_project(
     filter: &FilterConfig,
     claude_dir: &Path,

@@ -1,16 +1,5 @@
-//! Grow-only union merge for append-only JSONL files (`~/.claude/history.jsonl`).
-//!
-//! Last-writer-wins would drop prompt-history lines appended on another
-//! machine, so this merge is applied on BOTH push (repo = repo ∪ local) and
-//! pull (local = local ∪ remote): every machine converges to the superset.
-//!
-//! Lines are deduplicated by the `(timestamp, project, display)` fields when a
-//! line parses as JSON, falling back to the exact raw line otherwise — no
-//! other semantic assumptions are made about the schema.
-
 use serde_json::Value;
 
-/// Dedup identity for one JSONL line.
 fn line_key(line: &str) -> String {
     if let Ok(Value::Object(map)) = serde_json::from_str::<Value>(line) {
         if map.contains_key("timestamp") || map.contains_key("display") {
@@ -24,12 +13,9 @@ fn line_key(line: &str) -> String {
             );
         }
     }
-    // Fallback: the raw line is its own identity.
     format!("raw\u{1f}{line}")
 }
 
-/// A line's timestamp in milliseconds, when parseable (numeric epoch or
-/// RFC3339 string).
 fn line_timestamp(line: &str) -> Option<i64> {
     let value: Value = serde_json::from_str(line).ok()?;
     match value.get("timestamp")? {
@@ -41,10 +27,6 @@ fn line_timestamp(line: &str) -> Option<i64> {
     }
 }
 
-/// Merge `incoming` JSONL lines into `dest`, returning the merged text and
-/// how many new entries `incoming` contributed. Output is chronologically
-/// ordered by each line's numeric or RFC3339 `timestamp` where parseable;
-/// lines without one stay adjacent to the parseable line they followed.
 pub fn merge_history_lines(dest: &str, incoming: &str) -> (String, usize) {
     let mut seen = std::collections::HashSet::new();
     let mut lines: Vec<&str> = Vec::new();
@@ -62,8 +44,6 @@ pub fn merge_history_lines(dest: &str, incoming: &str) -> (String, usize) {
         }
     }
 
-    // Chronological, stable: a line without a parseable timestamp inherits the
-    // last timestamp seen before it, so it stays adjacent to its neighbor.
     let mut carried = i64::MIN;
     let keyed: Vec<(i64, &str)> = lines
         .iter()
@@ -120,7 +100,6 @@ mod tests {
 
     #[test]
     fn test_union_orders_chronologically() {
-        // Machine A has 1000 and 3000; machine B has 2000.
         let a = format!(
             "{}\n{}\n",
             line(1000, "/p", "one"),
@@ -166,7 +145,6 @@ mod tests {
 
     #[test]
     fn test_same_display_different_timestamp_not_deduped() {
-        // Running the same prompt twice is two entries.
         let a = format!("{}\n", line(1000, "/p", "run tests"));
         let b = format!("{}\n", line(2000, "/p", "run tests"));
 
@@ -195,7 +173,6 @@ mod tests {
     #[test]
     fn test_output_ends_with_newline_when_nonempty() {
         let a = line(1000, "/p", "one");
-        // no trailing newline on input
         let (merged, _) = merge_history_lines(&a, "");
         assert!(
             merged.ends_with('\n'),

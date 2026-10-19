@@ -1,8 +1,3 @@
-//! History command handlers
-//!
-//! Handles viewing and managing sync operation history including
-//! listing operations, viewing details, and clearing history.
-
 use anyhow::{Context, Result};
 use colored::Colorize;
 use inquire::Select;
@@ -10,7 +5,6 @@ use inquire::Select;
 use crate::history;
 use crate::interactive_conflict;
 
-/// Handle history list command
 pub fn handle_history_list(limit: usize) -> Result<()> {
     let history = history::OperationHistory::load().context("Failed to load operation history")?;
 
@@ -49,7 +43,6 @@ pub fn handle_history_list(limit: usize) -> Result<()> {
             op.affected_conversations.len()
         );
 
-        // Show operation statistics
         let stats = op.operation_stats();
         if !stats.is_empty() {
             let mut stat_parts = Vec::new();
@@ -77,12 +70,10 @@ pub fn handle_history_list(limit: usize) -> Result<()> {
     Ok(())
 }
 
-/// Handle history last command
 pub fn handle_history_last(operation_type: Option<&str>) -> Result<()> {
     let history = history::OperationHistory::load().context("Failed to load operation history")?;
 
     let operation = if let Some(op_type) = operation_type {
-        // Filter by operation type
         let filter_type = match op_type.to_lowercase().as_str() {
             "pull" => history::OperationType::Pull,
             "push" => history::OperationType::Push,
@@ -99,7 +90,6 @@ pub fn handle_history_last(operation_type: Option<&str>) -> Result<()> {
                 anyhow::anyhow!("No {} operation found in history.", filter_type.as_str())
             })?
     } else {
-        // Get the last operation of any type
         history
             .get_last_operation()
             .ok_or_else(|| anyhow::anyhow!("No operations in history."))?
@@ -130,7 +120,6 @@ pub fn handle_history_last(operation_type: Option<&str>) -> Result<()> {
         operation.affected_conversations.len()
     );
 
-    // Show operation statistics
     let stats = operation.operation_stats();
     if !stats.is_empty() {
         println!("\n{}", "Changes:".bold());
@@ -145,7 +134,6 @@ pub fn handle_history_last(operation_type: Option<&str>) -> Result<()> {
         }
     }
 
-    // Show artifact sync outcomes when any category was active
     if !operation.artifact_counts.is_empty() {
         println!("\n{}", "Artifacts:".bold());
         for counts in &operation.artifact_counts {
@@ -185,7 +173,6 @@ pub fn handle_history_last(operation_type: Option<&str>) -> Result<()> {
         );
     }
 
-    // Show some conversation details
     if !operation.affected_conversations.is_empty() {
         println!("\n{}", "Affected Conversations:".bold());
         let display_count = operation.affected_conversations.len().min(10);
@@ -224,9 +211,7 @@ pub fn handle_history_last(operation_type: Option<&str>) -> Result<()> {
     Ok(())
 }
 
-/// Handle history clear command
 pub fn handle_history_clear() -> Result<()> {
-    // Load the history
     let mut history =
         history::OperationHistory::load().context("Failed to load operation history")?;
 
@@ -237,7 +222,6 @@ pub fn handle_history_clear() -> Result<()> {
 
     let count = history.len();
 
-    // Clear the history
     history.clear().context("Failed to clear history")?;
 
     println!(
@@ -249,9 +233,7 @@ pub fn handle_history_clear() -> Result<()> {
     Ok(())
 }
 
-/// Handle history review command (interactive selection)
 pub fn handle_history_review(limit: usize) -> Result<()> {
-    // Check if we're in an interactive terminal
     if !interactive_conflict::is_interactive() {
         println!(
             "{}",
@@ -278,7 +260,6 @@ pub fn handle_history_review(limit: usize) -> Result<()> {
     let operations = history.list_operations();
     let display_count = operations.len().min(limit);
 
-    // Create selection options
     let options: Vec<String> = operations
         .iter()
         .take(display_count)
@@ -304,7 +285,6 @@ pub fn handle_history_review(limit: usize) -> Result<()> {
         })
         .collect();
 
-    // Add an option to exit
     let mut options_with_exit = options.clone();
     options_with_exit.push("← Exit review".to_string());
 
@@ -323,12 +303,10 @@ pub fn handle_history_review(limit: usize) -> Result<()> {
                     break;
                 }
 
-                // Find the index of the selected operation
                 if let Some(idx) = options.iter().position(|opt| opt == &selected) {
                     if idx < operations.len() {
                         let operation = &operations[idx];
 
-                        // Display detailed information
                         println!("\n{}", "=".repeat(80).yellow());
                         println!("{}", "Operation Details".bold().yellow());
                         println!("{}", "=".repeat(80).yellow());
@@ -355,7 +333,6 @@ pub fn handle_history_review(limit: usize) -> Result<()> {
                             operation.affected_conversations.len()
                         );
 
-                        // Show operation statistics
                         let stats = operation.operation_stats();
                         if !stats.is_empty() {
                             println!("\n{}", "Changes:".bold());
@@ -383,7 +360,6 @@ pub fn handle_history_review(limit: usize) -> Result<()> {
                             println!("  {}", snapshot_path.display().to_string().dimmed());
                         }
 
-                        // Show affected conversations
                         if !operation.affected_conversations.is_empty() {
                             println!("\n{}", "Affected Conversations:".bold());
                             let conv_display_count = operation.affected_conversations.len().min(20);
@@ -425,7 +401,6 @@ pub fn handle_history_review(limit: usize) -> Result<()> {
                 }
             }
             Err(_) => {
-                // User cancelled (Ctrl+C)
                 println!("\n{}", "Review cancelled.".yellow());
                 break;
             }

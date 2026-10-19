@@ -1,8 +1,3 @@
-//! Command handler modules
-//!
-//! This module contains all command handler functions extracted from main.rs,
-//! organized by functionality area.
-
 pub mod cleanup;
 pub mod config;
 pub mod history;
@@ -10,7 +5,6 @@ pub mod onboarding;
 pub mod purge;
 pub mod undo;
 
-// Re-export all public handler functions for convenient use
 pub use cleanup::handle_cleanup_snapshots;
 pub use config::{
     handle_config_export, handle_config_interactive, handle_config_wizard, handle_repo_selector,

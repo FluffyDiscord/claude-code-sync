@@ -1,13 +1,3 @@
-//! Shared fixtures for the `undo` unit tests.
-//!
-//! These live here rather than in each sibling module because the setup they
-//! encode is genuinely shared: the ten `operations` tests each need a snapshot
-//! on disk plus an `OperationHistory` referencing it, and before this module
-//! existed they all spelled that out longhand.
-
-// Each sibling test module uses a different subset of these. `clippy
-// --all-targets` compiles `cfg(test)` code, so a helper unused by one of them
-// would otherwise be a `dead_code` warning, and CI runs with `-D warnings`.
 #![allow(dead_code)]
 
 use std::collections::HashMap;
@@ -23,14 +13,12 @@ use crate::history::{
     ConversationSummary, OperationHistory, OperationRecord, OperationType, SyncOperation,
 };
 
-/// Write `content` to `dir/name` and return the path.
 pub(super) fn create_test_file(dir: &Path, name: &str, content: &str) -> PathBuf {
     let path = dir.join(name);
     fs::write(&path, content).unwrap();
     path
 }
 
-/// A temp dir holding an initialized git repo with one committed file.
 pub(super) fn setup_test_repo() -> (TempDir, GitRepo) {
     let temp_dir = tempdir().unwrap();
     let repo = GitRepo::init(temp_dir.path()).unwrap();
@@ -43,11 +31,6 @@ pub(super) fn setup_test_repo() -> (TempDir, GitRepo) {
     (temp_dir, repo)
 }
 
-/// A snapshot carrying metadata but no file contents.
-///
-/// Cleanup selects purely on `operation_type` and `timestamp`, so the tests
-/// that exercise it never need real file bodies. Callers that care about the
-/// commit hash or branch set those fields afterwards.
 pub(super) fn metadata_only_snapshot(
     id: &str,
     operation_type: OperationType,
@@ -65,11 +48,6 @@ pub(super) fn metadata_only_snapshot(
     }
 }
 
-/// Builds an `OperationHistory` on disk.
-///
-/// The undo tests care about which operations are present, in what order, and
-/// which snapshot each can be undone from. The conversation summaries attached
-/// to each record are filler — nothing asserts on them.
 pub(super) struct HistoryBuilder {
     path: PathBuf,
     history: OperationHistory,
@@ -83,8 +61,6 @@ impl HistoryBuilder {
         }
     }
 
-    /// Append one operation. `snapshot` is the snapshot file it can be undone
-    /// from; `None` models an operation recorded without one.
     pub(super) fn push(
         mut self,
         operation_type: OperationType,
@@ -112,21 +88,17 @@ impl HistoryBuilder {
         self
     }
 
-    /// Persist the accumulated operations.
     pub(super) fn save(self) {
         self.history.save_to(Some(self.path)).unwrap();
     }
 }
 
-/// Number of operations currently recorded at `history_path`.
 pub(super) fn operation_count(history_path: &Path) -> usize {
     OperationHistory::from_path(Some(history_path.to_path_buf()))
         .unwrap()
         .len()
 }
 
-/// The operations recorded at `history_path`, **most recent first** —
-/// `add_operation` inserts at index 0.
 pub(super) fn operation_types(history_path: &Path) -> Vec<OperationType> {
     OperationHistory::from_path(Some(history_path.to_path_buf()))
         .unwrap()

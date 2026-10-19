@@ -1,5 +1,3 @@
-//! Integration tests for `self-update` run as a real process.
-
 use std::fs;
 use std::path::Path;
 use std::process::{Command, Stdio};

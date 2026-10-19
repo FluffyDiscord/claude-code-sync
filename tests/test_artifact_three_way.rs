@@ -1,7 +1,3 @@
-//! A pull takes only what the other machine changed since this one last
-//! synced. Two `~/.claude` trees share one repository directory; the engine
-//! functions take explicit paths, and a plan built here never prompts.
-
 use std::fs;
 use std::path::Path;
 
@@ -39,7 +35,6 @@ fn read(path: &Path) -> String {
     fs::read_to_string(path).unwrap()
 }
 
-/// Machine A pushes, machine B pulls: both now agree on everything.
 fn two_machines_in_sync(seed: &[(&str, &str)]) -> (TempDir, TempDir, TempDir) {
     let repo = TempDir::new().unwrap();
     let a = TempDir::new().unwrap();

@@ -2,7 +2,6 @@ use claude_code_sync::history::OperationType;
 use claude_code_sync::undo::{UndoPreview, VerbosityLevel as UndoVerbosity};
 use claude_code_sync::VerbosityLevel;
 
-/// Test VerbosityLevel enum basic functionality
 #[test]
 fn test_verbosity_level_equality() {
     assert_eq!(VerbosityLevel::Quiet, VerbosityLevel::Quiet);
@@ -14,7 +13,6 @@ fn test_verbosity_level_equality() {
     assert_ne!(VerbosityLevel::Quiet, VerbosityLevel::Verbose);
 }
 
-/// Test VerbosityLevel can be copied
 #[test]
 fn test_verbosity_level_copy() {
     let v1 = VerbosityLevel::Verbose;
@@ -22,7 +20,6 @@ fn test_verbosity_level_copy() {
     assert_eq!(v1, v2);
 }
 
-/// Test UndoPreview display doesn't panic with different verbosity levels
 #[test]
 fn test_undo_preview_display_quiet() {
     let preview = UndoPreview {
@@ -38,7 +35,6 @@ fn test_undo_preview_display_quiet() {
         snapshot_timestamp: Some(chrono::Utc::now()),
     };
 
-    // Should not panic - just verify it runs
     preview.display(UndoVerbosity::Quiet);
 }
 
@@ -54,7 +50,6 @@ fn test_undo_preview_display_normal() {
         snapshot_timestamp: Some(chrono::Utc::now()),
     };
 
-    // Should not panic
     preview.display(UndoVerbosity::Normal);
 }
 
@@ -74,11 +69,9 @@ fn test_undo_preview_display_verbose() {
         snapshot_timestamp: Some(chrono::Utc::now()),
     };
 
-    // Should not panic
     preview.display(UndoVerbosity::Verbose);
 }
 
-/// Test UndoPreview with many files (tests truncation logic)
 #[test]
 fn test_undo_preview_many_files_verbose() {
     let many_files: Vec<String> = (0..50)
@@ -95,11 +88,9 @@ fn test_undo_preview_many_files_verbose() {
         snapshot_timestamp: Some(chrono::Utc::now()),
     };
 
-    // Should handle many files without panic
     preview.display(UndoVerbosity::Verbose);
 }
 
-/// Test UndoPreview with push operation and commit hash
 #[test]
 fn test_undo_preview_push_with_commit() {
     let preview = UndoPreview {
@@ -112,19 +103,15 @@ fn test_undo_preview_push_with_commit() {
         snapshot_timestamp: Some(chrono::Utc::now() - chrono::Duration::hours(2)),
     };
 
-    // Should display commit hash in verbose mode
     preview.display(UndoVerbosity::Verbose);
 }
 
-/// Test that verbosity conversion works between main and undo modules
 #[test]
 fn test_verbosity_conversion() {
-    // Main VerbosityLevel
     let main_quiet = VerbosityLevel::Quiet;
     let main_normal = VerbosityLevel::Normal;
     let main_verbose = VerbosityLevel::Verbose;
 
-    // Convert to undo VerbosityLevel (as done in handlers)
     let undo_quiet = match main_quiet {
         VerbosityLevel::Quiet => UndoVerbosity::Quiet,
         VerbosityLevel::Normal => UndoVerbosity::Normal,
@@ -143,18 +130,15 @@ fn test_verbosity_conversion() {
         VerbosityLevel::Verbose => UndoVerbosity::Verbose,
     };
 
-    // Verify conversions
     assert_eq!(undo_quiet, UndoVerbosity::Quiet);
     assert_eq!(undo_normal, UndoVerbosity::Normal);
     assert_eq!(undo_verbose, UndoVerbosity::Verbose);
 }
 
-/// Test FilterConfig can be loaded (tests config handler dependency)
 #[test]
 fn test_filter_config_load_or_default() {
     use claude_code_sync::filter::FilterConfig;
 
-    // Should either load existing config or create default
     let config = FilterConfig::load();
     assert!(config.is_ok());
 
@@ -162,7 +146,6 @@ fn test_filter_config_load_or_default() {
     assert!(config.max_file_size_bytes > 0);
 }
 
-/// Test FilterConfig can be cloned (needed for interactive handlers)
 #[test]
 fn test_filter_config_clone() {
     use claude_code_sync::filter::FilterConfig;
@@ -178,14 +161,12 @@ fn test_filter_config_clone() {
     );
 }
 
-/// Test that FilterConfig can be modified (needed for wizard)
 #[test]
 fn test_filter_config_modification() {
     use claude_code_sync::filter::FilterConfig;
 
     let mut config = FilterConfig::load().unwrap();
 
-    // Test modifications
     config.exclude_attachments = true;
     assert!(config.exclude_attachments);
 
@@ -198,11 +179,10 @@ fn test_filter_config_modification() {
     config.exclude_patterns = vec!["*test*".to_string(), "*tmp*".to_string()];
     assert_eq!(config.exclude_patterns.len(), 2);
 
-    config.max_file_size_bytes = 5 * 1024 * 1024; // 5MB
+    config.max_file_size_bytes = 5 * 1024 * 1024;
     assert_eq!(config.max_file_size_bytes, 5 * 1024 * 1024);
 }
 
-/// Test snapshot cleanup config defaults
 #[test]
 fn test_snapshot_cleanup_config_default() {
     use claude_code_sync::undo::SnapshotCleanupConfig;
@@ -212,7 +192,6 @@ fn test_snapshot_cleanup_config_default() {
     assert_eq!(config.max_age_days, 7);
 }
 
-/// Test snapshot cleanup config can be customized
 #[test]
 fn test_snapshot_cleanup_config_custom() {
     use claude_code_sync::undo::SnapshotCleanupConfig;
@@ -226,13 +205,8 @@ fn test_snapshot_cleanup_config_custom() {
     assert_eq!(config.max_age_days, 14);
 }
 
-/// Test that non-interactive mode doesn't require terminal
 #[test]
 fn test_non_interactive_push_verbosity() {
-    // This tests that the logic paths work without actual terminal interaction
-    // We can't easily test the actual push_history function without a full setup,
-    // but we can verify the verbosity enum works as expected
-
     let verbosity = VerbosityLevel::Quiet;
     assert_eq!(verbosity, VerbosityLevel::Quiet);
 
@@ -240,7 +214,6 @@ fn test_non_interactive_push_verbosity() {
     assert_eq!(verbosity, VerbosityLevel::Verbose);
 }
 
-/// Test UndoPreview fields are accessible
 #[test]
 fn test_undo_preview_field_access() {
     let timestamp = chrono::Utc::now();
@@ -256,7 +229,6 @@ fn test_undo_preview_field_access() {
         snapshot_timestamp: Some(snapshot_time),
     };
 
-    // Test field access
     assert_eq!(preview.operation_type, OperationType::Pull);
     assert_eq!(preview.branch, Some("test-branch".to_string()));
     assert_eq!(preview.affected_files.len(), 1);
@@ -264,7 +236,6 @@ fn test_undo_preview_field_access() {
     assert_eq!(preview.commit_hash, Some("abc123".to_string()));
 }
 
-/// Test empty files list handling
 #[test]
 fn test_undo_preview_empty_files() {
     let preview = UndoPreview {
@@ -277,20 +248,17 @@ fn test_undo_preview_empty_files() {
         snapshot_timestamp: Some(chrono::Utc::now()),
     };
 
-    // Should handle empty files gracefully
     preview.display(UndoVerbosity::Quiet);
     preview.display(UndoVerbosity::Normal);
     preview.display(UndoVerbosity::Verbose);
 }
 
-/// Test verbosity level Debug trait
 #[test]
 fn test_verbosity_debug() {
     let quiet = VerbosityLevel::Quiet;
     let normal = VerbosityLevel::Normal;
     let verbose = VerbosityLevel::Verbose;
 
-    // Should be able to format with Debug
     let quiet_str = format!("{:?}", quiet);
     let normal_str = format!("{:?}", normal);
     let verbose_str = format!("{:?}", verbose);

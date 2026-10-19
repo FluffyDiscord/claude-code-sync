@@ -5,46 +5,28 @@ use std::path::PathBuf;
 use super::summary::ConversationSummary;
 use super::types::{OperationType, SyncOperation};
 
-/// Record of a single sync operation
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OperationRecord {
-    /// Type of operation (pull or push)
     pub operation_type: OperationType,
 
-    /// When the operation was performed
     pub timestamp: DateTime<Utc>,
 
-    /// Git branch the operation was performed on (if available)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub branch: Option<String>,
 
-    /// List of conversations affected by this operation
     pub affected_conversations: Vec<ConversationSummary>,
 
-    /// Path to snapshot for undo capability (used for pull operations)
-    ///
-    /// Snapshots are created during pull operations to enable undo functionality.
-    /// Only files with conflicts are backed up, not the entire history.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub snapshot_path: Option<PathBuf>,
 
-    /// Git commit hash before the operation (used for push undo)
-    ///
-    /// For push operations, we store the commit hash instead of creating
-    /// a file snapshot. Undo simply resets to this commit.
-    /// This is much more efficient than storing file contents.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub commit_hash: Option<String>,
 
-    /// Per-category artifact sync outcomes for this operation. Empty (and
-    /// omitted from JSON) when no artifact category was enabled, so history
-    /// files stay readable by older versions.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub artifact_counts: Vec<crate::artifacts::engine::CategoryCounts>,
 }
 
 impl OperationRecord {
-    /// Create a new operation record
     pub fn new(
         operation_type: OperationType,
         branch: Option<String>,
@@ -61,10 +43,6 @@ impl OperationRecord {
         }
     }
 
-    /// Get a summary string for this operation
-    ///
-    /// This method will be used in future CLI commands to display
-    /// operation history to users (e.g., `claude-code-sync history`).
     #[allow(dead_code)]
     pub fn summary(&self) -> String {
         format!(
@@ -76,11 +54,6 @@ impl OperationRecord {
         )
     }
 
-    /// Count conversations by operation type
-    ///
-    /// This method will be used in future CLI commands to provide
-    /// statistics about sync operations (e.g., showing how many files
-    /// were added, modified, or had conflicts).
     pub fn operation_stats(&self) -> std::collections::HashMap<SyncOperation, usize> {
         let mut stats = std::collections::HashMap::new();
         for conv in &self.affected_conversations {
@@ -96,8 +69,6 @@ mod tests {
 
     #[test]
     fn test_old_record_json_without_artifact_counts_deserializes() {
-        // operation-history.json files written before artifact sync have no
-        // artifact_counts key; they must keep loading.
         let old_json = r#"{
             "operation_type": "push",
             "timestamp": "2025-01-01T00:00:00Z",

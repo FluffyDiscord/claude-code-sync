@@ -7,7 +7,6 @@ use crate::git::{self, GitRepo};
 
 use super::state::{MultiRepoState, RepoConfig};
 
-/// Initialize sync repository from onboarding config
 pub fn init_from_onboarding(
     repo_path: &Path,
     remote_url: Option<&str>,
@@ -15,8 +14,6 @@ pub fn init_from_onboarding(
 ) -> Result<()> {
     crate::config::ConfigManager::ensure_config_dir()?;
 
-    // If this is a cloned repo and it already exists, just open it
-    // Otherwise, initialize a new one
     let repo = if repo_path.exists() && git::is_repo(repo_path) {
         GitRepo::open(repo_path)?
     } else {
@@ -25,7 +22,6 @@ pub fn init_from_onboarding(
 
     git::attributes::ensure_sync_attributes(repo_path)?;
 
-    // Add remote if specified
     let has_remote = if let Some(url) = remote_url {
         if !repo.has_remote("origin") {
             repo.add_remote("origin", url)?;
@@ -35,7 +31,6 @@ pub fn init_from_onboarding(
         false
     };
 
-    // Create repo config
     let repo_name = "default".to_string();
     let repo_config = RepoConfig {
         name: repo_name.clone(),
@@ -46,7 +41,6 @@ pub fn init_from_onboarding(
         description: None,
     };
 
-    // Save multi-repo state (v2 format)
     let mut repos = HashMap::new();
     repos.insert(repo_name.clone(), repo_config);
     let state = MultiRepoState {
@@ -59,9 +53,7 @@ pub fn init_from_onboarding(
     Ok(())
 }
 
-/// Initialize a new sync repository
 pub fn init_sync_repo(repo_path: &Path, remote_url: Option<&str>) -> Result<()> {
-    // Ensure config directory exists
     crate::config::ConfigManager::ensure_config_dir()?;
 
     println!(
@@ -69,7 +61,6 @@ pub fn init_sync_repo(repo_path: &Path, remote_url: Option<&str>) -> Result<()> 
         "Initializing Claude Code sync repository...".cyan().bold()
     );
 
-    // Create/open the repository
     let repo = if repo_path.exists() && git::is_repo(repo_path) {
         println!(
             "  {} existing repository at {}",
@@ -88,7 +79,6 @@ pub fn init_sync_repo(repo_path: &Path, remote_url: Option<&str>) -> Result<()> 
 
     git::attributes::ensure_sync_attributes(repo_path)?;
 
-    // Add remote if specified
     let has_remote = if let Some(url) = remote_url {
         if !repo.has_remote("origin") {
             repo.add_remote("origin", url)?;
@@ -101,7 +91,6 @@ pub fn init_sync_repo(repo_path: &Path, remote_url: Option<&str>) -> Result<()> 
         false
     };
 
-    // Create repo config
     let repo_name = "default".to_string();
     let repo_config = RepoConfig {
         name: repo_name.clone(),
@@ -112,7 +101,6 @@ pub fn init_sync_repo(repo_path: &Path, remote_url: Option<&str>) -> Result<()> 
         description: None,
     };
 
-    // Save multi-repo state (v2 format)
     let mut repos = HashMap::new();
     repos.insert(repo_name.clone(), repo_config);
     let state = MultiRepoState {
@@ -122,7 +110,6 @@ pub fn init_sync_repo(repo_path: &Path, remote_url: Option<&str>) -> Result<()> 
     };
     state.save()?;
 
-    // Save default filter configuration if it doesn't exist
     let filter_config_path = crate::config::ConfigManager::filter_config_path()?;
     if !filter_config_path.exists() {
         crate::filter::FilterConfig::default().save()?;

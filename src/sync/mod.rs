@@ -1,4 +1,3 @@
-// Module declarations
 pub mod discovery;
 mod init;
 mod pull;
@@ -8,7 +7,6 @@ mod state;
 mod status;
 mod summary_cache;
 
-// Re-export public types and functions
 pub use init::{init_from_onboarding, init_sync_repo};
 pub use pull::pull_history;
 pub use push::push_history;
@@ -21,11 +19,8 @@ use colored::Colorize;
 
 use crate::artifacts::engine::{descriptor, ArtifactChangeKind, ArtifactReport, CategoryCounts};
 
-/// Maximum number of conversations to display per project in summary
 const MAX_CONVERSATIONS_TO_DISPLAY: usize = 10;
 
-/// List the artifact files a push or pull changed, one block per category with
-/// its counters, the way conversations are listed per project.
 pub(crate) fn print_artifact_changes(report: &ArtifactReport) {
     let has_no_changes = report.changes.is_empty();
     if has_no_changes {
@@ -88,15 +83,6 @@ fn describe_change_counts(counts: &CategoryCounts) -> String {
         .join(", ")
 }
 
-/// Write the `.gitattributes` sync rules into the sync repository and commit
-/// them.
-///
-/// Two machines that both appended between syncs leave git with a conflict in
-/// a transcript or in the prompt history, which stops the pull. The rules tell
-/// git to keep both sides' lines instead, and to write text files with LF.
-/// A repository with other pending work is left alone: staging everything
-/// would sweep that work into this commit, and a push commits the rules along
-/// with it anyway.
 pub(crate) fn commit_sync_attributes(
     repo: &crate::git::GitRepo,
     repo_path: &std::path::Path,
@@ -115,7 +101,6 @@ pub(crate) fn commit_sync_attributes(
     Ok(())
 }
 
-/// Bidirectional sync: pull remote changes, then push local changes
 pub fn sync_bidirectional(
     commit_message: Option<&str>,
     branch: Option<&str>,
@@ -131,11 +116,8 @@ pub fn sync_bidirectional(
         println!("{}", "Step 1: Pulling remote changes...".bold());
     }
 
-    // First, pull remote changes
     pull_history(true, branch, interactive, verbosity)?;
 
-    // Purge between the two, when it is turned on, so the removals travel with
-    // the push below instead of waiting for the next one.
     let filter = crate::filter::FilterConfig::load()?;
     if filter.purge_after_sync {
         let state = SyncState::load()?;
@@ -147,7 +129,6 @@ pub fn sync_bidirectional(
         println!("{}", "Step 2: Pushing local changes...".bold());
     }
 
-    // Then, push local changes
     push_history(
         commit_message,
         true,
@@ -221,42 +202,31 @@ mod tests {
     #[serial]
     fn test_url_validation() {
         let temp_dir = TempDir::new().unwrap();
-        // Isolate the config dir: this test writes and then deletes state.json at the
-        // resolved default location, so without an override it would clobber the real
-        // ~/Library/Application Support/claude-code-sync/state.json on macOS.
-        // #[serial] keeps the process-global override from racing other tests.
         let prev = std::env::var("CLAUDE_CODE_SYNC_CONFIG_DIR").ok();
         std::env::set_var("CLAUDE_CODE_SYNC_CONFIG_DIR", temp_dir.path());
         let repo_path = temp_dir.path().join("test-repo");
 
-        // Initialize a test repo
         GitRepo::init(&repo_path).unwrap();
 
-        // Save a test state
         let state = SyncState {
             sync_repo_path: repo_path.clone(),
             has_remote: false,
             is_cloned_repo: false,
         };
 
-        // Create state directory using ConfigManager
         let _state_path = crate::config::ConfigManager::ensure_config_dir().unwrap();
         let state_file = crate::config::ConfigManager::state_file_path().unwrap();
         std::fs::write(&state_file, serde_json::to_string(&state).unwrap()).unwrap();
 
-        // Valid HTTPS URL
         let result = set_remote("origin", "https://github.com/user/repo.git");
         assert!(result.is_ok());
 
-        // Valid HTTP URL
         let result = set_remote("origin", "http://gitlab.com/user/repo.git");
         assert!(result.is_ok());
 
-        // Valid SSH URL
         let result = set_remote("origin", "git@github.com:user/repo.git");
         assert!(result.is_ok());
 
-        // Invalid URL (missing protocol)
         let result = set_remote("origin", "github.com/user/repo.git");
         assert!(result.is_err());
         if let Err(e) = result {
@@ -264,7 +234,6 @@ mod tests {
             assert!(error_msg.contains("Invalid URL format"));
         }
 
-        // Cleanup
         std::fs::remove_file(&state_file).ok();
         match prev {
             Some(v) => std::env::set_var("CLAUDE_CODE_SYNC_CONFIG_DIR", v),
@@ -279,11 +248,9 @@ mod tests {
             ..Default::default()
         };
 
-        // JSONL files should be included
         assert!(filter.should_include(Path::new("session.jsonl")));
         assert!(filter.should_include(Path::new("/path/to/session.jsonl")));
 
-        // Non-JSONL files should be excluded
         assert!(!filter.should_include(Path::new("image.png")));
         assert!(!filter.should_include(Path::new("document.pdf")));
         assert!(!filter.should_include(Path::new("archive.zip")));
@@ -293,9 +260,7 @@ mod tests {
     #[test]
     fn test_filter_without_attachments_exclusion() {
         let filter = FilterConfig::default();
-        // By default, exclude_attachments is false
 
-        // All files should be included (subject to other filters)
         assert!(filter.should_include(Path::new("session.jsonl")));
         assert!(filter.should_include(Path::new("image.png")));
         assert!(filter.should_include(Path::new("document.pdf")));

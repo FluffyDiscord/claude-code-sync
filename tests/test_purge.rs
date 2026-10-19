@@ -1,13 +1,9 @@
-//! Integration tests for transcript retention: what ages out, what never does,
-//! and what goes with a transcript when it does.
-
 use std::fs;
 use std::path::{Path, PathBuf};
 
 use claude_code_sync::purge::{self, MINIMUM_RETENTION_DAYS};
 use tempfile::TempDir;
 
-/// A transcript whose last message is `age_days` old.
 fn transcript(projects_dir: &Path, project: &str, session: &str, age_days: i64) -> PathBuf {
     let last_message = chrono::Utc::now() - chrono::Duration::days(age_days);
     write_transcript(
@@ -73,7 +69,6 @@ fn a_transcript_inside_the_window_is_untouched() {
 fn age_comes_from_the_last_message_not_the_files_mtime() {
     let claude = TempDir::new().unwrap();
     let repo = TempDir::new().unwrap();
-    // Exactly what a pull produces: an old conversation written to disk today.
     let pulled = transcript(claude.path(), "-home-user-app", "pulled-today", 400);
     let mtime = fs::metadata(&pulled).unwrap().modified().unwrap();
     assert!(
@@ -118,7 +113,6 @@ fn everything_claude_code_keeps_beside_a_transcript_goes_with_it() {
     fs::write(project.join("old-session/tool-results/out.txt"), "output").unwrap();
     fs::write(project.join("old-session.orphaned-123-a.jsonl"), "{}\n").unwrap();
     fs::write(project.join("old-session.jsonl.superseded-123"), "{}\n").unwrap();
-    // A different session in the same project must survive untouched.
     let keep = transcript(claude.path(), "-home-user-app", "recent", 10);
 
     purge_with_window(claude.path(), repo.path(), MINIMUM_RETENTION_DAYS);
@@ -165,8 +159,6 @@ fn a_subagent_transcript_never_ages_out_on_its_own() {
 
 #[test]
 fn a_session_used_recently_elsewhere_is_not_old_here() {
-    // The same session, stale on one side and recent on the other: whichever
-    // side is fresh keeps both copies.
     for (local_age, repo_age) in [(400, 3), (3, 400)] {
         let claude = TempDir::new().unwrap();
         let repo = TempDir::new().unwrap();

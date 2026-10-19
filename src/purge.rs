@@ -1,12 +1,3 @@
-//! Retention for conversation transcripts.
-//!
-//! Transcripts past the retention window are removed from `~/.claude/projects`
-//! and the sync repository together: removing them on one side only means the
-//! next sync restores them from the other.
-//!
-//! The window is never shorter than `cleanupPeriodDays`, which is when Claude
-//! Code deletes the transcript anyway, nor shorter than six months.
-
 use anyhow::{bail, Context, Result};
 use chrono::{DateTime, Duration, Utc};
 use rayon::prelude::*;
@@ -15,34 +6,25 @@ use std::path::{Path, PathBuf};
 
 use crate::git::GitRepo;
 
-/// Shortest retention window applied by default: six months.
 pub const MINIMUM_RETENTION_DAYS: u32 = 180;
 
-/// Claude Code's documented default for `cleanupPeriodDays`.
 pub const CLAUDE_CODE_DEFAULT_RETENTION_DAYS: u32 = 30;
 
-/// One session that has aged out, with every file belonging to it.
 #[derive(Debug, Clone)]
 pub struct PurgeTarget {
     pub session_id: String,
-    /// Timestamp of the last message, which the age is measured from.
     pub last_activity: DateTime<Utc>,
     pub age_days: i64,
-    /// Files and directories to remove, across both trees.
     pub paths: Vec<PathBuf>,
     pub bytes: u64,
 }
 
-/// What a purge would remove, computed before anything is deleted.
 #[derive(Debug, Default)]
 pub struct PurgePlan {
     pub retention_days: u32,
     pub cutoff: Option<DateTime<Utc>>,
     pub targets: Vec<PurgeTarget>,
-    /// Sessions kept because at least one copy has no readable age.
     pub undated: usize,
-    /// Transcript files that failed to parse, such as one being written right
-    /// now. Their session is kept.
     pub unreadable: usize,
 }
 
@@ -55,26 +37,19 @@ impl PurgePlan {
         self.targets.iter().map(|t| t.bytes).sum()
     }
 
-    /// Age of the oldest session in the plan, in days.
     pub fn oldest_age_days(&self) -> i64 {
         self.targets.iter().map(|t| t.age_days).max().unwrap_or(0)
     }
 }
 
-/// What a purge removed.
 #[derive(Debug, Default)]
 pub struct PurgeReport {
     pub sessions: usize,
     pub files: usize,
     pub bytes: u64,
-    /// Paths that could not be removed, with the reason.
     pub failures: Vec<String>,
 }
 
-/// Retention window in days: the longer of [`MINIMUM_RETENTION_DAYS`] and this
-/// machine's `cleanupPeriodDays`, lengthened (never shortened) by a configured
-/// override. A purge can run unattended after every sync, so a short window
-/// set once, or left in an older config, must not quietly delete recent work.
 pub fn retention_days(claude_dir: &Path, configured: Option<u32>) -> u32 {
     let floor = MINIMUM_RETENTION_DAYS.max(claude_code_retention_days(claude_dir));
     match configured {
@@ -89,12 +64,6 @@ pub fn retention_days(claude_dir: &Path, configured: Option<u32>) -> u32 {
     }
 }
 
-/// `cleanupPeriodDays` from the user-level settings files, or
-/// [`CLAUDE_CODE_DEFAULT_RETENTION_DAYS`].
-///
-/// The longest of them wins rather than the one Claude Code's precedence picks:
-/// the value only ever holds a deletion back. Project-level settings are not
-/// consulted; `--older-than` covers that case.
 fn claude_code_retention_days(claude_dir: &Path) -> u32 {
     let configured = ["settings.json", "settings.local.json"]
         .into_iter()
@@ -112,21 +81,14 @@ fn claude_code_retention_days(claude_dir: &Path) -> u32 {
     configured.unwrap_or(CLAUDE_CODE_DEFAULT_RETENTION_DAYS)
 }
 
-/// Every copy of one session found across the trees, before deciding its fate.
 #[derive(Default)]
 struct SessionCopies {
     last_activity: Option<DateTime<Utc>>,
-    /// Set when any copy has no readable age, which keeps the session.
     undatable: bool,
     paths: Vec<PathBuf>,
     bytes: u64,
 }
 
-/// Classify what a purge would remove from both project trees, without
-/// deleting anything.
-///
-/// A session is decided as a whole — every copy of it, with its sidecars — and
-/// its age is that of the most recent copy.
 pub fn plan(
     claude_projects_dir: &Path,
     repo_projects_dir: &Path,
@@ -136,7 +98,6 @@ pub fn plan(
         retention_days,
         ..Default::default()
     };
-    // Checked: a window large enough to overflow has nothing to purge anyway.
     let Some(cutoff) = Utc::now().checked_sub_signed(Duration::days(i64::from(retention_days)))
     else {
         return Ok(plan);
@@ -147,9 +108,6 @@ pub fn plan(
         std::collections::BTreeMap::new();
 
     for transcripts_root in [claude_projects_dir, repo_projects_dir] {
-        // Summarizing is the whole cost of planning a purge, and every file is
-        // independent: read them across the cores, then fold the results in the
-        // order the walk found them.
         let summarized: Vec<(PathBuf, Result<crate::parser::ConversationSession>)> =
             transcripts(transcripts_root)
                 .into_par_iter()
@@ -163,8 +121,6 @@ pub fn plan(
             let session = match summary {
                 Ok(session) => session,
                 Err(error) => {
-                    // The session is kept whole: a copy that cannot be read
-                    // says nothing about the age of the one that can.
                     log::warn!("Skipping unreadable {}: {error}", transcript.display());
                     plan.unreadable += 1;
                     if let Some(stem) = transcript.file_stem().and_then(|s| s.to_str()) {
@@ -213,8 +169,6 @@ pub fn plan(
     Ok(plan)
 }
 
-/// Delete everything the plan names. A path that is already gone is skipped,
-/// not an error.
 pub fn apply(plan: &PurgePlan) -> Result<PurgeReport> {
     let mut report = PurgeReport::default();
 
@@ -242,8 +196,6 @@ pub fn apply(plan: &PurgePlan) -> Result<PurgeReport> {
     Ok(report)
 }
 
-/// Open the sync repository, before anything is deleted: a repository that
-/// cannot record the removal must stop the purge while the files still exist.
 pub fn open_sync_repo(repo_root: &Path) -> Result<GitRepo> {
     let repo = GitRepo::open(repo_root)
         .with_context(|| format!("Failed to open repository at {}", repo_root.display()))?;
@@ -252,11 +204,6 @@ pub fn open_sync_repo(repo_root: &Path) -> Result<GitRepo> {
     Ok(repo)
 }
 
-/// Refuse to purge while the repository holds uncommitted work.
-///
-/// A repo-side transcript that is not committed yet — a push that was declined,
-/// a path an ignore rule covers — would be deleted with no copy in history,
-/// which is the one thing a purge promises not to do.
 pub fn ensure_nothing_uncommitted(repo: &GitRepo) -> Result<()> {
     if repo.has_changes()? {
         bail!(
@@ -267,7 +214,6 @@ pub fn ensure_nothing_uncommitted(repo: &GitRepo) -> Result<()> {
     Ok(())
 }
 
-/// Stage and commit the removals. Returns whether a commit was made.
 pub fn commit_removals(repo: &GitRepo, plan: &PurgePlan) -> Result<bool> {
     repo.stage_all()?;
     if !repo.has_changes()? {
@@ -281,10 +227,6 @@ pub fn commit_removals(repo: &GitRepo, plan: &PurgePlan) -> Result<bool> {
     Ok(true)
 }
 
-/// Session transcripts of a project tree: `<project>/<session>.jsonl` only.
-///
-/// Subagent transcripts live deeper, under `<session>/subagents/`, and are
-/// removed with their parent session rather than on their own age.
 fn transcripts(projects_dir: &Path) -> Vec<PathBuf> {
     if !projects_dir.is_dir() {
         return Vec::new();
@@ -301,8 +243,6 @@ fn transcripts(projects_dir: &Path) -> Vec<PathBuf> {
         .collect()
 }
 
-/// Files Claude Code keeps beside a transcript and deletes with it: the
-/// session directory (`subagents/`, `tool-results/`) and any set-aside copies.
 fn sidecars(transcript: &Path) -> Vec<PathBuf> {
     let Some(directory) = transcript.parent() else {
         return Vec::new();
@@ -317,8 +257,6 @@ fn sidecars(transcript: &Path) -> Vec<PathBuf> {
         found.push(session_directory);
     }
 
-    // Every sibling named after this session: `.orphaned-…`, `.superseded-…`,
-    // `.stopoffset`, and whatever Claude Code adds next.
     let companion = format!("{stem}.");
     let transcript_name = transcript.file_name();
     let Ok(entries) = std::fs::read_dir(directory) else {
@@ -338,7 +276,6 @@ fn sidecars(transcript: &Path) -> Vec<PathBuf> {
     found
 }
 
-/// Timestamp of the session's last message, in UTC.
 fn last_activity(session: &crate::parser::ConversationSession) -> Option<DateTime<Utc>> {
     let stamp = session.latest_timestamp()?;
     DateTime::parse_from_rfc3339(stamp)

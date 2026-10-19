@@ -3,10 +3,6 @@ use clap::{Parser, Subcommand};
 use colored::Colorize;
 use std::path::PathBuf;
 
-// The binary is a thin CLI over the `claude_code_sync` library. Import the
-// modules explicitly rather than glob-importing both the crate root and
-// `handlers` — both export a `config`, and two globs supplying the same name
-// is an ambiguity error at every `config::` call site.
 use claude_code_sync::git::GitRepo;
 use claude_code_sync::handlers::{
     handle_cleanup_snapshots, handle_config_export, handle_config_interactive,
@@ -414,60 +410,34 @@ enum HistoryAction {
 }
 
 fn main() -> Result<()> {
-    // Initialize logging (rotate log if needed, then set up logger)
-    logger::rotate_log_if_needed().ok(); // Ignore errors during log rotation
-    logger::init_logger().ok(); // Ignore errors during logger init
+    logger::rotate_log_if_needed().ok();
+    logger::init_logger().ok();
 
     log::debug!("claude-code-sync started");
 
     let cli = Cli::parse();
 
-    // Check if initialization is needed (before processing any command)
     let needs_onboarding = !is_initialized()?;
 
-    // Determine the actual command to run
-    let command = if let Some(cmd) = cli.command {
-        cmd
-    } else {
-        // No command provided
-        if needs_onboarding {
-            // Will trigger onboarding below, then default to sync
-            Commands::Sync {
-                message: None,
-                branch: None,
-                exclude_attachments: false,
-                interactive: false,
-                verbose: false,
-                quiet: false,
-            }
-        } else {
-            // Already initialized, default to sync
-            Commands::Sync {
-                message: None,
-                branch: None,
-                exclude_attachments: false,
-                interactive: false,
-                verbose: false,
-                quiet: false,
-            }
-        }
-    };
+    let command = cli.command.unwrap_or(Commands::Sync {
+        message: None,
+        branch: None,
+        exclude_attachments: false,
+        interactive: false,
+        verbose: false,
+        quiet: false,
+    });
 
-    // Check if this is an Init or Config command (skip auto-onboarding for these)
     let is_init_command = matches!(command, Commands::Init { .. });
     let is_config_command = matches!(command, Commands::Config { .. });
     let is_self_update_command = matches!(command, Commands::SelfUpdate { .. });
 
-    // Run onboarding if needed (but not for Init or Config commands - they handle their own
-    // setup - nor SelfUpdate, which never touches the sync repository)
     if needs_onboarding && !is_init_command && !is_config_command && !is_self_update_command {
         log::info!("Running onboarding flow - first time setup detected");
 
-        // Try non-interactive init first (from config file)
         let initialized = try_init_from_config().unwrap_or(false);
 
         if !initialized {
-            // Fall back to interactive onboarding
             run_onboarding_flow()?;
         }
 
@@ -481,16 +451,13 @@ fn main() -> Result<()> {
             clone,
             config,
         } => {
-            // If config file is provided, use non-interactive init
             if config.is_some() {
                 run_init_from_config(config)?;
             } else if clone {
-                // Clone mode: requires remote URL
                 let remote_url = remote.as_deref().ok_or_else(|| {
                     anyhow::anyhow!("--clone requires --remote <URL> to be specified")
                 })?;
 
-                // Determine clone destination
                 let clone_path = if let Some(ref path) = local {
                     path.clone()
                 } else {
@@ -505,7 +472,6 @@ fn main() -> Result<()> {
                 GitRepo::clone(remote_url, &clone_path)?;
                 sync::init_from_onboarding(&clone_path, Some(remote_url), true)?;
 
-                // Save default filter configuration if it doesn't exist
                 let filter_config_path = config::ConfigManager::filter_config_path()?;
                 if !filter_config_path.exists() {
                     filter::FilterConfig::default().save()?;
@@ -513,10 +479,8 @@ fn main() -> Result<()> {
 
                 println!("{}", "Clone and initialization complete!".green().bold());
             } else if let Some(local_path) = local {
-                // Use CLI args for init (local path)
                 sync::init_sync_repo(&local_path, remote.as_deref())?;
             } else if let Some(remote_url) = remote {
-                // Just --remote provided: clone to default location
                 let default_path = config::ConfigManager::default_repo_dir()?;
 
                 println!(
@@ -532,7 +496,6 @@ fn main() -> Result<()> {
                 GitRepo::clone(&remote_url, &default_path)?;
                 sync::init_from_onboarding(&default_path, Some(&remote_url), true)?;
 
-                // Save default filter configuration if it doesn't exist
                 let filter_config_path = config::ConfigManager::filter_config_path()?;
                 if !filter_config_path.exists() {
                     filter::FilterConfig::default().save()?;
@@ -540,9 +503,7 @@ fn main() -> Result<()> {
 
                 println!("{}", "Clone and initialization complete!".green().bold());
             } else {
-                // No args provided, try config file first, then fall back to interactive onboarding
                 if !try_init_from_config()? {
-                    // No config file found, run interactive onboarding
                     run_onboarding_flow()?;
                 }
             }
@@ -556,7 +517,6 @@ fn main() -> Result<()> {
             verbose,
             quiet,
         } => {
-            // Determine verbosity level
             let verbosity = if verbose {
                 VerbosityLevel::Verbose
             } else if quiet {
@@ -581,7 +541,6 @@ fn main() -> Result<()> {
             verbose,
             quiet,
         } => {
-            // Determine verbosity level
             let verbosity = if verbose {
                 VerbosityLevel::Verbose
             } else if quiet {
@@ -600,7 +559,6 @@ fn main() -> Result<()> {
             verbose,
             quiet,
         } => {
-            // Determine verbosity level
             let verbosity = if verbose {
                 VerbosityLevel::Verbose
             } else if quiet {
@@ -666,7 +624,6 @@ fn main() -> Result<()> {
                 || enable_artifacts.is_some()
                 || disable_artifacts.is_some();
 
-            // Check if ANY flag was provided
             let has_any_flag = has_filter_flag
                 || !map_project.is_empty()
                 || !unmap_project.is_empty()
@@ -682,7 +639,6 @@ fn main() -> Result<()> {
                 || export;
 
             if !has_any_flag {
-                // No args provided - show repo selector menu
                 handle_repo_selector()?;
             } else if export {
                 handle_config_export()?;
@@ -693,8 +649,6 @@ fn main() -> Result<()> {
             } else if show {
                 filter::show_config()?;
             } else {
-                // Each setting is applied on its own, so passing several in one
-                // invocation does not silently drop all but the first.
                 if !map_project.is_empty() || !unmap_project.is_empty() {
                     filter::update_project_map(&map_project, &unmap_project)?;
                 }
@@ -748,7 +702,6 @@ fn main() -> Result<()> {
             verbose,
             quiet,
         } => {
-            // Determine verbosity level
             let verbosity = if verbose {
                 VerbosityLevel::Verbose
             } else if quiet {
@@ -788,7 +741,6 @@ fn main() -> Result<()> {
             verbose,
             quiet,
         } => {
-            // Determine verbosity level
             let verbosity = if verbose {
                 VerbosityLevel::Verbose
             } else if quiet {

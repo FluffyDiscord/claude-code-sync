@@ -1,6 +1,3 @@
-//! MultiRepoState: the v2 on-disk format, migration from v1, and switching the
-//! active repository.
-
 mod common;
 
 use anyhow::Result;
@@ -11,7 +8,6 @@ use serial_test::serial;
 use std::collections::HashMap;
 use std::path::PathBuf;
 
-/// A v2 state.json with two repos, `work` active.
 const TWO_REPOS_V2: &str = r#"{
     "version": 2,
     "active_repo": "work",
@@ -30,10 +26,6 @@ const TWO_REPOS_V2: &str = r#"{
         }
     }
 }"#;
-
-// ---------------------------------------------------------------------------
-// Format
-// ---------------------------------------------------------------------------
 
 #[test]
 fn test_multi_repo_state_serialization() -> Result<()> {
@@ -75,10 +67,6 @@ fn test_multi_repo_state_serialization() -> Result<()> {
     Ok(())
 }
 
-// ---------------------------------------------------------------------------
-// Migration and the SyncState compatibility layer
-// ---------------------------------------------------------------------------
-
 #[test]
 #[serial]
 fn test_v1_to_v2_migration() -> Result<()> {
@@ -92,7 +80,6 @@ fn test_v1_to_v2_migration() -> Result<()> {
     }"#,
     );
 
-    // Loading a v1 file must transparently upgrade it.
     let multi_state = MultiRepoState::load()?;
 
     assert_eq!(multi_state.version, 2);
@@ -106,7 +93,6 @@ fn test_v1_to_v2_migration() -> Result<()> {
     assert!(default_repo.has_remote);
     assert!(!default_repo.is_cloned_repo);
 
-    // ...and persist the upgrade, not just hold it in memory.
     let content = std::fs::read_to_string(&state_path)?;
     assert!(content.contains("\"version\": 2"));
     assert!(content.contains("\"active_repo\": \"default\""));
@@ -135,7 +121,6 @@ fn test_sync_state_loads_v2_format() -> Result<()> {
     }"#,
     );
 
-    // SyncState is the v1-shaped view over the active repo.
     let sync_state = SyncState::load()?;
 
     assert_eq!(sync_state.sync_repo_path, PathBuf::from("/tmp/my-repo"));
@@ -170,7 +155,6 @@ fn test_multi_repo_state_multiple_repos() -> Result<()> {
 fn test_invalid_active_repo_error() -> Result<()> {
     let env = ConfigEnv::new();
 
-    // active_repo names a repo that isn't in the map.
     env.write_state_json(
         r#"{
         "version": 2,
@@ -196,7 +180,6 @@ fn test_invalid_active_repo_error() -> Result<()> {
 #[test]
 #[serial]
 fn test_config_handles_uninitialized_state() -> Result<()> {
-    // No state file at all — a fresh install.
     let _env = ConfigEnv::new();
 
     let result = MultiRepoState::load();
@@ -209,10 +192,6 @@ fn test_config_handles_uninitialized_state() -> Result<()> {
 
     Ok(())
 }
-
-// ---------------------------------------------------------------------------
-// Switching the active repo
-// ---------------------------------------------------------------------------
 
 #[test]
 #[serial]
@@ -229,7 +208,6 @@ fn test_switch_active_repo() -> Result<()> {
     let reloaded = MultiRepoState::load()?;
     assert_eq!(reloaded.active_repo, "personal");
 
-    // The switch has to be visible through the compatibility layer too.
     let sync_state = SyncState::load()?;
     assert_eq!(
         sync_state.sync_repo_path,
@@ -249,7 +227,6 @@ fn test_operations_use_active_repo() -> Result<()> {
 
     sync::init_sync_repo(&repo1_path, None)?;
 
-    // Add a second repo by hand.
     GitRepo::init(&repo2_path)?;
     let mut multi_state = MultiRepoState::load()?;
     multi_state.repos.insert(
@@ -265,7 +242,6 @@ fn test_operations_use_active_repo() -> Result<()> {
     );
     multi_state.save()?;
 
-    // Merely existing must not make repo2 active.
     assert_eq!(SyncState::load()?.sync_repo_path, repo1_path);
 
     let mut multi_state = MultiRepoState::load()?;
@@ -276,10 +252,6 @@ fn test_operations_use_active_repo() -> Result<()> {
 
     Ok(())
 }
-
-// ---------------------------------------------------------------------------
-// init writes v2
-// ---------------------------------------------------------------------------
 
 #[test]
 #[serial]
@@ -356,14 +328,12 @@ fn test_cloned_repo_flag_in_v2() -> Result<()> {
     let env = ConfigEnv::new();
     let repo_path = env.join("cloned-repo");
 
-    // Pre-create the repo, as a clone would have.
     GitRepo::init(&repo_path)?;
     sync::init_from_onboarding(&repo_path, Some("https://github.com/test/repo.git"), true)?;
 
     let multi_state = MultiRepoState::load()?;
     assert!(multi_state.repos.get("default").unwrap().is_cloned_repo);
 
-    // And through the compatibility layer.
     assert!(SyncState::load()?.is_cloned_repo);
 
     Ok(())
@@ -374,7 +344,6 @@ fn test_cloned_repo_flag_in_v2() -> Result<()> {
 fn test_full_workflow_with_git_repos() -> Result<()> {
     let env = ConfigEnv::new();
 
-    // A bare repo standing in for a real remote.
     let bare_repo_path = env.join("bare-remote.git");
     std::process::Command::new("git")
         .args(["init", "--bare"])
@@ -393,7 +362,6 @@ fn test_full_workflow_with_git_repos() -> Result<()> {
     assert!(default_repo.has_remote);
     assert_eq!(default_repo.remote_url, Some(remote_url.clone()));
 
-    // The remote must exist in git itself, not just in our state file.
     let output = std::process::Command::new("git")
         .args(["remote", "-v"])
         .current_dir(&repo_path)

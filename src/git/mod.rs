@@ -1,5 +1,3 @@
-//! The sync repository, driven through the git CLI.
-
 pub mod attributes;
 pub mod lfs;
 
@@ -9,8 +7,6 @@ use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
-/// A file both sides of a merge changed in ways the merge cannot combine.
-/// A side that deleted the file has `None`.
 #[derive(Debug, Default)]
 pub struct ConflictedFile {
     pub path: String,
@@ -29,18 +25,15 @@ pub enum ConflictChoice {
 
 pub type ConflictResolver<'a> = &'a dyn Fn(&ConflictedFile) -> Result<ConflictChoice>;
 
-/// Check if a directory is a git repository.
 pub fn is_repo(path: &Path) -> bool {
     path.join(".git").exists()
 }
 
-/// A git repository, driven through the git CLI.
 pub struct GitRepo {
     workdir: PathBuf,
 }
 
 impl GitRepo {
-    /// Open an existing Git repository.
     pub fn open(path: &Path) -> Result<Self> {
         let path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
 
@@ -54,7 +47,6 @@ impl GitRepo {
         Ok(Self { workdir: path })
     }
 
-    /// Initialize a new Git repository.
     pub fn init(path: &Path) -> Result<Self> {
         std::fs::create_dir_all(path)
             .with_context(|| format!("Failed to create directory '{}'", path.display()))?;
@@ -72,7 +64,6 @@ impl GitRepo {
             ));
         }
 
-        // Configure user name and email if not set
         let _ = Command::new("git")
             .args(["config", "user.name", "Claude Code Sync"])
             .current_dir(path)
@@ -85,7 +76,6 @@ impl GitRepo {
         Self::open(path)
     }
 
-    /// Clone a remote repository.
     pub fn clone(url: &str, path: &Path) -> Result<Self> {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent).with_context(|| {
@@ -108,7 +98,6 @@ impl GitRepo {
         Self::open(path)
     }
 
-    /// Run a git command and return stdout as a string.
     fn run_git(&self, args: &[&str]) -> Result<String> {
         let output = Command::new("git")
             .args(args)
@@ -127,14 +116,11 @@ impl GitRepo {
         Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
     }
 
-    /// Run a git command, returning Ok if it succeeds (ignoring stdout).
     fn run_git_ok(&self, args: &[&str]) -> Result<()> {
         self.run_git(args)?;
         Ok(())
     }
 
-    /// Run a quiet network git command with stderr passed through: git draws
-    /// its own progress on a terminal and prints its own errors anywhere.
     fn run_git_with_progress(&self, args: &[&str]) -> Result<()> {
         let mut command = Command::new("git");
         command
@@ -159,8 +145,6 @@ impl GitRepo {
         Ok(())
     }
 
-    /// Run a git command and return its raw output, for the callers that read
-    /// a failure's own text instead of turning it into an error.
     fn git_output(&self, args: &[&str]) -> Result<std::process::Output> {
         Command::new("git")
             .args(args)
@@ -169,8 +153,6 @@ impl GitRepo {
             .with_context(|| format!("Failed to run 'git {}'", args.join(" ")))
     }
 
-    /// Whether `remote` has `branch`. Only a definite "no" (exit code 2 from
-    /// `ls-remote --exit-code`) counts; an unreachable remote is an error.
     fn remote_has_branch(&self, remote: &str, branch: &str) -> Result<bool> {
         let output = self.git_output(&["ls-remote", "--exit-code", "--heads", remote, branch])?;
         match output.status.code() {
@@ -183,10 +165,7 @@ impl GitRepo {
         }
     }
 
-    /// Whether the only uncommitted change is the `.gitattributes` file.
     fn only_sync_attributes_pending(&self) -> Result<bool> {
-        // Raw output: `run_git` trims, which would eat the first line's
-        // leading status column.
         let output = self.git_output(&["status", "--porcelain", "--untracked-files=all"])?;
         let status = String::from_utf8_lossy(&output.stdout);
         let mut lines = status.lines().filter(|l| !l.trim().is_empty()).peekable();
@@ -286,7 +265,6 @@ impl GitRepo {
         Ok(output.stdout)
     }
 
-    /// Check if a git command succeeds (exit code 0).
     fn git_succeeds(&self, args: &[&str]) -> bool {
         Command::new("git")
             .args(args)
@@ -296,17 +274,14 @@ impl GitRepo {
             .unwrap_or(false)
     }
 
-    /// Get the current branch name.
     pub fn current_branch(&self) -> Result<String> {
         self.run_git(&["branch", "--show-current"])
     }
 
-    /// Get the current commit hash.
     pub fn current_commit_hash(&self) -> Result<String> {
         self.run_git(&["rev-parse", "HEAD"])
     }
 
-    /// Stage all changes (add and remove).
     pub fn stage_all(&self) -> Result<()> {
         let merge_is_unfinished = self.has_unfinished_merge();
         if merge_is_unfinished {
@@ -318,48 +293,39 @@ impl GitRepo {
         self.run_git_ok(&["-c", "core.safecrlf=false", "add", "-A"])
     }
 
-    /// Restage every tracked file under the current line-ending rules.
     pub fn stage_renormalized(&self) -> Result<()> {
         self.run_git_ok(&["-c", "core.safecrlf=false", "add", "--renormalize", "."])
     }
 
-    /// Commit staged changes with a message.
     pub fn commit(&self, message: &str) -> Result<()> {
         self.run_git_ok(&["commit", "-m", message])
     }
 
-    /// Check if there are uncommitted changes.
     pub fn has_changes(&self) -> Result<bool> {
         let output = self.run_git(&["status", "--porcelain"])?;
         Ok(!output.is_empty())
     }
 
-    /// Add a remote repository.
     pub fn add_remote(&self, name: &str, url: &str) -> Result<()> {
         self.run_git_ok(&["remote", "add", name, url])
     }
 
-    /// Check if a remote exists.
     pub fn has_remote(&self, name: &str) -> bool {
         self.git_succeeds(&["remote", "get-url", name])
     }
 
-    /// Get the URL for a remote.
     pub fn get_remote_url(&self, name: &str) -> Result<String> {
         self.run_git(&["remote", "get-url", name])
     }
 
-    /// Set or update the URL for a remote.
     pub fn set_remote_url(&self, name: &str, url: &str) -> Result<()> {
         self.run_git_ok(&["remote", "set-url", name, url])
     }
 
-    /// Remove a remote.
     pub fn remove_remote(&self, name: &str) -> Result<()> {
         self.run_git_ok(&["remote", "remove", name])
     }
 
-    /// List all remote names.
     pub fn list_remotes(&self) -> Result<Vec<String>> {
         let output = self.run_git(&["remote"])?;
         if output.is_empty() {
@@ -369,7 +335,6 @@ impl GitRepo {
         }
     }
 
-    /// Push to a remote repository.
     pub fn push(&self, remote: &str, branch: &str) -> Result<()> {
         self.run_git_with_progress(&["push", remote, branch])
             .with_context(|| {
@@ -386,14 +351,6 @@ impl GitRepo {
             })
     }
 
-    /// Fetch and merge the remote branch. A file both sides changed in ways
-    /// the merge cannot combine goes to `resolve_conflict`.
-    ///
-    /// The merge is spelled out rather than left to `git pull`, which since
-    /// git 2.34 refuses to reconcile diverged branches until the machine's
-    /// own `pull.rebase` / `pull.ff` is configured — a setting this tool does
-    /// not own. Merge, not rebase: undo records point at local commit hashes,
-    /// and a rebase rewrites them.
     pub fn pull(
         &self,
         remote: &str,
@@ -407,9 +364,6 @@ impl GitRepo {
             log::warn!("Undid the merge an interrupted pull left unfinished; merging again");
         }
 
-        // A remote nobody has pushed to yet has no branch to fetch. That is
-        // the first machine's normal state, not a failure: there is nothing
-        // to merge, and the push that follows creates the branch.
         if !self.remote_has_branch(remote, branch)? {
             log::info!("Remote '{remote}' has no branch '{branch}' yet; nothing to pull");
             return Ok(());
@@ -418,13 +372,7 @@ impl GitRepo {
         self.run_git_with_progress(&["fetch", remote, branch])
             .with_context(|| format!("Failed to fetch from remote '{remote}'"))?;
 
-        // A repository `init` just created has no commit of its own, and git
-        // refuses to merge into an empty head: take the fetched branch whole.
-        // Only when there is nothing to lose — checking it out is a hard reset,
-        // and work staged but never committed would go with it.
         if !self.git_succeeds(&["rev-parse", "--verify", "HEAD"]) {
-            // `init` writes the sync `.gitattributes` without committing it.
-            // It is regenerated after the pull, so it is not work to protect.
             if self.only_sync_attributes_pending()? {
                 let _ = self.git_output(&["rm", "--cached", "--quiet", ".gitattributes"]);
                 std::fs::remove_file(self.workdir.join(".gitattributes"))
@@ -448,9 +396,6 @@ impl GitRepo {
             return Ok(());
         }
 
-        // A merge git refused to start — uncommitted work in the sync
-        // repository, unrelated histories — has nothing to abort and changed
-        // nothing.
         let merge_started = self.has_unfinished_merge();
         let settled = if merge_started {
             self.settle_conflicts(resolve_conflict)
@@ -483,12 +428,10 @@ impl GitRepo {
         ))
     }
 
-    /// Whether an interrupted pull left a merge unfinished.
     pub fn has_unfinished_merge(&self) -> bool {
         self.git_succeeds(&["rev-parse", "--verify", "--quiet", "MERGE_HEAD"])
     }
 
-    /// Reset to a specific commit, keeping the working directory.
     pub fn reset_soft(&self, commit: &str) -> Result<()> {
         self.run_git_ok(&["reset", "--soft", commit])
     }
@@ -521,7 +464,6 @@ mod tests {
 
         assert!(temp.path().join(".git").exists());
 
-        // Verify we can open the initialized repo
         let _reopened = GitRepo::open(temp.path()).unwrap();
     }
 
@@ -530,22 +472,18 @@ mod tests {
         let temp = TempDir::new().unwrap();
         let repo = GitRepo::init(temp.path()).unwrap();
 
-        // Initially no changes
         assert!(!repo.has_changes().unwrap());
 
-        // Create a file
         std::fs::write(temp.path().join("test.txt"), "hello").unwrap();
         assert!(repo.has_changes().unwrap());
 
-        // Stage and commit
         repo.stage_all().unwrap();
         repo.commit("Initial commit").unwrap();
         assert!(!repo.has_changes().unwrap());
 
-        // Verify commit hash
         let hash = repo.current_commit_hash().unwrap();
         assert!(!hash.is_empty());
-        assert_eq!(hash.len(), 40); // Full SHA
+        assert_eq!(hash.len(), 40);
     }
 
     #[test]
@@ -553,12 +491,10 @@ mod tests {
         let temp = TempDir::new().unwrap();
         let repo = GitRepo::init(temp.path()).unwrap();
 
-        // Create initial commit (needed for branch to exist)
         std::fs::write(temp.path().join("test.txt"), "hello").unwrap();
         repo.stage_all().unwrap();
         repo.commit("Initial commit").unwrap();
 
-        // Check branch (default is master or main depending on git config)
         let branch = repo.current_branch().unwrap();
         assert!(!branch.is_empty());
     }
@@ -591,9 +527,6 @@ mod tests {
         Ok(ConflictChoice::AbortMerge)
     }
 
-    /// Two clones of one bare remote, both already one commit ahead of it in
-    /// their own way: the shape a sync repository takes when two machines
-    /// pushed between pulls.
     fn two_diverged_machines(shared_file: Option<&str>) -> (TempDir, GitRepo, PathBuf, String) {
         let root = TempDir::new().unwrap();
         git_in(root.path(), &["init", "--bare", "--quiet", "origin"]);
@@ -768,8 +701,6 @@ mod tests {
 
     #[test]
     fn a_log_both_machines_wrote_to_is_merged_rather_than_refused() {
-        // A transcript and the prompt history only ever grow, so both sides'
-        // lines are kept instead of stopping the pull with a conflict.
         let (_root, machine, workdir, branch) = two_diverged_machines(Some("history.jsonl"));
 
         machine.pull("origin", &branch, &stop_at_conflicts).unwrap();
@@ -786,8 +717,6 @@ mod tests {
     fn the_first_pull_of_a_repository_with_no_commits_checks_the_branch_out() {
         let (root, _machine, _first, branch) = two_diverged_machines(None);
 
-        // What `init --remote <url>` leaves behind: a repository with a remote
-        // and not a single commit of its own.
         let fresh = root.path().join("fresh");
         let machine = GitRepo::init(&fresh).unwrap();
         use_git_for_windows_line_endings(&fresh);
@@ -808,7 +737,6 @@ mod tests {
     fn a_first_pull_is_not_blocked_by_the_attributes_init_wrote() {
         let (root, _machine, _first, branch) = two_diverged_machines(None);
 
-        // `init` writes the sync rules and commits nothing.
         let fresh = root.path().join("fresh");
         let machine = GitRepo::init(&fresh).unwrap();
         crate::git::attributes::ensure_sync_attributes(&fresh).unwrap();
@@ -901,8 +829,6 @@ mod tests {
     fn a_pull_git_refuses_to_start_says_the_repository_was_left_alone() {
         let (_root, machine, workdir, branch) = two_diverged_machines(None);
 
-        // An interrupted push leaves the sync repository dirty, and git will
-        // not begin a merge that would overwrite uncommitted work.
         std::fs::write(workdir.join("only-second.txt"), "half a push\n").unwrap();
 
         let error = machine

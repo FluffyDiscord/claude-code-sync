@@ -3,8 +3,6 @@ use claude_code_sync::parser::{write_entries_to_file, ConversationEntry, Convers
 use serde_json::json;
 use tempfile::TempDir;
 
-/// A session is a summary of a transcript on disk, so these tests write the
-/// messages out and let sync read them back the way a real merge does.
 fn session_of(name: &str, entries: Vec<ConversationEntry>) -> (TempDir, ConversationSession) {
     let dir = TempDir::new().unwrap();
     let path = dir.path().join(format!("{name}.jsonl"));
@@ -13,7 +11,6 @@ fn session_of(name: &str, entries: Vec<ConversationEntry>) -> (TempDir, Conversa
     (dir, session)
 }
 
-/// Helper to create a test entry
 fn create_entry(
     uuid: &str,
     parent: Option<&str>,
@@ -36,7 +33,6 @@ fn create_entry(
 
 #[test]
 fn test_simple_extension() {
-    // Local: A -> B
     let (_local_dir, local) = session_of(
         "test",
         vec![
@@ -45,7 +41,6 @@ fn test_simple_extension() {
         ],
     );
 
-    // Remote: A -> B -> C -> D (extended conversation)
     let (_remote_dir, remote) = session_of(
         "test",
         vec![
@@ -68,7 +63,6 @@ fn test_simple_extension() {
         );
     }
 
-    // Should have A, B, C, D = 4 messages
     assert_eq!(
         result.merged_entries.len(),
         4,
@@ -78,7 +72,6 @@ fn test_simple_extension() {
 
 #[test]
 fn test_conversation_branch() {
-    // Local: A -> B -> C
     let (_local_dir, local) = session_of(
         "test",
         vec![
@@ -93,7 +86,6 @@ fn test_conversation_branch() {
         ],
     );
 
-    // Remote: A -> B -> D (different branch from B)
     let (_remote_dir, remote) = session_of(
         "test",
         vec![
@@ -114,14 +106,12 @@ fn test_conversation_branch() {
     println!("Stats: {:?}", result.stats);
     println!("Branches detected: {}", result.stats.branches_detected);
 
-    // Should have A, B, C, D = 4 messages
     assert_eq!(
         result.merged_entries.len(),
         4,
         "Should have 4 messages with both branches"
     );
 
-    // Should detect that B has two children
     assert!(
         result.stats.branches_detected > 0,
         "Should detect conversation branch"
@@ -130,7 +120,6 @@ fn test_conversation_branch() {
 
 #[test]
 fn test_edited_message_resolution() {
-    // Local: A with old timestamp
     let (_local_dir, local) = session_of(
         "test",
         vec![create_entry(
@@ -141,7 +130,6 @@ fn test_edited_message_resolution() {
         )],
     );
 
-    // Remote: A with newer timestamp (edited)
     let (_remote_dir, remote) = session_of(
         "test",
         vec![create_entry(
@@ -154,13 +142,10 @@ fn test_edited_message_resolution() {
 
     let result = merge_conversations(&local, &remote).unwrap();
 
-    // Should have 1 message (the edited one)
     assert_eq!(result.merged_entries.len(), 1);
 
-    // Should have detected and resolved 1 edit
     assert_eq!(result.stats.edits_resolved, 1, "Should detect one edit");
 
-    // Should keep the newer version
     let content = result.merged_entries[0].message.as_ref().unwrap()["text"]
         .as_str()
         .unwrap();
@@ -169,8 +154,6 @@ fn test_edited_message_resolution() {
 
 #[test]
 fn test_non_overlapping_additions() {
-    // Local adds C, Remote adds D
-    // Local: A -> B -> C
     let (_local_dir, local) = session_of(
         "test",
         vec![
@@ -180,7 +163,6 @@ fn test_non_overlapping_additions() {
         ],
     );
 
-    // Remote: A -> B -> D
     let (_remote_dir, remote) = session_of(
         "test",
         vec![
@@ -192,17 +174,14 @@ fn test_non_overlapping_additions() {
 
     let result = merge_conversations(&local, &remote).unwrap();
 
-    // Both additions should be preserved as branches
     assert_eq!(result.merged_entries.len(), 4, "Should have both additions");
     assert!(result.stats.branches_detected > 0, "Should detect branch");
 }
 
 #[test]
 fn test_real_conversation_data() {
-    // Load real conversation data from test fixtures
     let test_file = "data/-tmp-test1/4dd02356-9e88-4c94-a858-20da56e2c0d3.jsonl";
 
-    // If file doesn't exist, skip test
     if !std::path::Path::new(test_file).exists() {
         println!("Skipping test - test data not found");
         return;
@@ -215,8 +194,6 @@ fn test_real_conversation_data() {
         session.message_count()
     );
 
-    // Simulate a scenario where one machine has the first half of messages
-    // and another has extended it
     let entries = session.load_entries().unwrap();
     let midpoint = entries.len() / 2;
 
@@ -228,7 +205,6 @@ fn test_real_conversation_data() {
     println!("Merge result: {} messages", result.merged_entries.len());
     println!("Stats: {:?}", result.stats);
 
-    // Should have all messages from the full session
     assert_eq!(
         result.merged_entries.len(),
         entries.len(),
@@ -238,15 +214,6 @@ fn test_real_conversation_data() {
 
 #[test]
 fn test_complex_branching_scenario() {
-    // Create a complex scenario with multiple branches
-    //        A
-    //       / \
-    //      B1  B2
-    //     /     \
-    //    C1      C2
-    //             \
-    //              D2
-
     let (_local_dir, local) = session_of(
         "test",
         vec![
@@ -289,20 +256,17 @@ fn test_complex_branching_scenario() {
     );
     println!("Branches detected: {}", result.stats.branches_detected);
 
-    // Should have all 6 unique messages
     assert_eq!(
         result.merged_entries.len(),
         6,
         "Should have all unique messages"
     );
 
-    // Should detect branch at A (has B1 and B2 as children)
     assert!(
         result.stats.branches_detected > 0,
         "Should detect branching at A"
     );
 
-    // Verify all messages are present
     let uuids: Vec<String> = result
         .merged_entries
         .iter()
@@ -319,7 +283,6 @@ fn test_complex_branching_scenario() {
 
 #[test]
 fn test_no_conflicts_when_identical() {
-    // When both sides have identical conversations, merge should work seamlessly
     let entries = vec![
         create_entry("A", None, "2025-01-01T00:00:00Z", "Message A"),
         create_entry("B", Some("A"), "2025-01-01T00:01:00Z", "Message B"),
@@ -331,7 +294,6 @@ fn test_no_conflicts_when_identical() {
 
     let result = merge_conversations(&local, &remote).unwrap();
 
-    // Should have exact same messages (no duplicates)
     assert_eq!(
         result.merged_entries.len(),
         3,
@@ -349,14 +311,13 @@ fn test_no_conflicts_when_identical() {
 
 #[test]
 fn test_mixed_uuid_and_non_uuid_entries() {
-    // Test merging with both UUID-tracked messages and non-UUID system events
     let (_local_dir, local) = session_of(
         "test",
         vec![
             create_entry("A", None, "2025-01-01T00:00:00Z", "User message"),
             ConversationEntry {
                 entry_type: "file-history-snapshot".to_string(),
-                uuid: None, // System events may not have UUIDs
+                uuid: None,
                 parent_uuid: None,
                 session_id: Some("test".to_string()),
                 timestamp: Some("2025-01-01T00:00:30Z".to_string()),
@@ -387,7 +348,6 @@ fn test_mixed_uuid_and_non_uuid_entries() {
     );
     println!("Timestamp-merged: {}", result.stats.timestamp_merged);
 
-    // Should have A, snapshot, B, C = 4 entries
     assert_eq!(
         result.merged_entries.len(),
         4,

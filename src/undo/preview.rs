@@ -4,42 +4,30 @@ use std::path::PathBuf;
 use super::snapshot::Snapshot;
 use crate::history::{OperationHistory, OperationType};
 
-/// Preview information for an undo operation
 #[derive(Debug)]
 pub struct UndoPreview {
-    /// Operation type being undone
     pub operation_type: OperationType,
-    /// When the original operation occurred
     pub operation_timestamp: chrono::DateTime<chrono::Utc>,
-    /// Branch name
     pub branch: Option<String>,
-    /// List of files that will be affected
     pub affected_files: Vec<String>,
-    /// Number of conversations affected
     pub conversation_count: usize,
-    /// Git commit hash (for push operations)
     pub commit_hash: Option<String>,
-    /// Snapshot creation timestamp (None when the operation has no snapshot,
-    /// e.g. modern push records that only store a commit hash)
     pub snapshot_timestamp: Option<chrono::DateTime<chrono::Utc>>,
 }
 
-/// Verbosity level for preview display
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum VerbosityLevel {
-    Quiet,   // Minimal output
-    Normal,  // Standard output
-    Verbose, // Detailed output
+    Quiet,
+    Normal,
+    Verbose,
 }
 
 impl UndoPreview {
-    /// Display a formatted preview of the undo operation with specified verbosity
     pub fn display(&self, verbosity: VerbosityLevel) {
         use colored::Colorize;
 
         match verbosity {
             VerbosityLevel::Quiet => {
-                // Minimal output - just operation type and counts
                 let op_type = match self.operation_type {
                     OperationType::Pull => "Pull",
                     OperationType::Push => "Push",
@@ -54,7 +42,6 @@ impl UndoPreview {
             }
 
             VerbosityLevel::Normal => {
-                // Standard output - current behavior
                 println!("\n{}", "=".repeat(80).yellow());
                 println!("{}", "Undo Preview".bold().yellow());
                 println!("{}", "=".repeat(80).yellow());
@@ -124,7 +111,6 @@ impl UndoPreview {
             }
 
             VerbosityLevel::Verbose => {
-                // Verbose output - show all details including file sizes and previews
                 println!("\n{}", "=".repeat(80).yellow());
                 println!("{}", "Undo Preview (Verbose Mode)".bold().yellow());
                 println!("{}", "=".repeat(80).yellow());
@@ -177,7 +163,6 @@ impl UndoPreview {
                     for (idx, file) in self.affected_files.iter().enumerate() {
                         println!("  {}. {}", idx + 1, file);
 
-                        // Try to show file size if file exists
                         if let Ok(metadata) = std::fs::metadata(file) {
                             let size_kb = metadata.len() as f64 / 1024.0;
                             println!("     {} {:.1} KB", "Size:".dimmed(), size_kb);
@@ -214,23 +199,13 @@ impl UndoPreview {
     }
 }
 
-/// Preview the last pull operation without executing it
-///
-/// # Arguments
-/// * `history_path` - Optional custom path for operation history (for testing)
-///
-/// # Returns
-/// An `UndoPreview` with information about what would be undone
 pub fn preview_undo_pull(history_path: Option<PathBuf>) -> Result<UndoPreview> {
-    // Load operation history
     let history = OperationHistory::from_path(history_path)?;
 
-    // Find the last pull operation
     let last_pull = history
         .get_last_operation_by_type(OperationType::Pull)
         .ok_or_else(|| anyhow!("No pull operation found in history to undo"))?;
 
-    // Get the snapshot path
     let snapshot_path = last_pull.snapshot_path.as_ref().ok_or_else(|| {
         anyhow!(
             "No snapshot found for last pull operation. \
@@ -238,7 +213,6 @@ pub fn preview_undo_pull(history_path: Option<PathBuf>) -> Result<UndoPreview> {
         )
     })?;
 
-    // Verify snapshot exists
     if !snapshot_path.exists() {
         return Err(anyhow!(
             "Snapshot file not found: {}. \
@@ -247,10 +221,8 @@ pub fn preview_undo_pull(history_path: Option<PathBuf>) -> Result<UndoPreview> {
         ));
     }
 
-    // Load the snapshot
     let snapshot = Snapshot::load_from_disk(snapshot_path)?;
 
-    // Get list of affected files
     let affected_files: Vec<String> = snapshot.files.keys().cloned().collect();
 
     Ok(UndoPreview {
@@ -264,38 +236,25 @@ pub fn preview_undo_pull(history_path: Option<PathBuf>) -> Result<UndoPreview> {
     })
 }
 
-/// Preview the last push operation without executing it
-///
-/// # Arguments
-/// * `history_path` - Optional custom path for operation history (for testing)
-///
-/// # Returns
-/// An `UndoPreview` with information about what would be undone
 pub fn preview_undo_push(history_path: Option<PathBuf>) -> Result<UndoPreview> {
-    // Load operation history
     let history = OperationHistory::from_path(history_path)?;
 
-    // Find the last push operation
     let last_push = history
         .get_last_operation_by_type(OperationType::Push)
         .ok_or_else(|| anyhow!("No push operation found in history to undo"))?;
 
-    // Modern push records store the reset target directly in commit_hash and have
-    // no snapshot file (git itself holds the history). Only legacy records carry a
-    // snapshot; mirror the fallback order used by undo_push in operations.rs.
     if let Some(ref hash) = last_push.commit_hash {
         return Ok(UndoPreview {
             operation_type: OperationType::Push,
             operation_timestamp: last_push.timestamp,
             branch: last_push.branch.clone(),
-            affected_files: Vec::new(), // Push doesn't restore files, just resets git
+            affected_files: Vec::new(),
             conversation_count: last_push.affected_conversations.len(),
             commit_hash: Some(hash.clone()),
             snapshot_timestamp: None,
         });
     }
 
-    // Legacy: get the snapshot path
     let snapshot_path = last_push.snapshot_path.as_ref().ok_or_else(|| {
         anyhow!(
             "No commit hash or snapshot found for last push operation. \
@@ -303,7 +262,6 @@ pub fn preview_undo_push(history_path: Option<PathBuf>) -> Result<UndoPreview> {
         )
     })?;
 
-    // Verify snapshot exists
     if !snapshot_path.exists() {
         return Err(anyhow!(
             "Snapshot file not found: {}. \
@@ -312,14 +270,13 @@ pub fn preview_undo_push(history_path: Option<PathBuf>) -> Result<UndoPreview> {
         ));
     }
 
-    // Load the snapshot
     let snapshot = Snapshot::load_from_disk(snapshot_path)?;
 
     Ok(UndoPreview {
         operation_type: OperationType::Push,
         operation_timestamp: last_push.timestamp,
         branch: snapshot.branch.clone(),
-        affected_files: Vec::new(), // Push doesn't restore files, just resets git
+        affected_files: Vec::new(),
         conversation_count: last_push.affected_conversations.len(),
         commit_hash: snapshot.git_commit_hash.clone(),
         snapshot_timestamp: Some(snapshot.timestamp),
@@ -334,8 +291,6 @@ mod tests {
 
     #[test]
     fn test_preview_undo_push_with_commit_hash_only() {
-        // Modern push records store only commit_hash (no snapshot file); preview
-        // must succeed from the record alone instead of demanding a snapshot.
         let temp_dir = TempDir::new().unwrap();
         let history_path = temp_dir.path().join("operation-history.json");
 

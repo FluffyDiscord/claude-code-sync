@@ -1,8 +1,3 @@
-//! Config surface tests for artifact sync: CLI toggle plumbing and headless
-//! InitConfig support. Uses the post-#89 isolation pattern: a dedicated
-//! CLAUDE_CODE_SYNC_CONFIG_DIR per test, serialized because env vars are
-//! process-global.
-
 use claude_code_sync::filter::{update_config, FilterConfig};
 use claude_code_sync::onboarding::InitConfig;
 use serial_test::serial;
@@ -89,7 +84,6 @@ fn test_unknown_category_name_errors_and_names_valid_ones() {
     assert!(msg.contains("nonsense"), "names the bad input: {msg}");
     assert!(msg.contains("prompt-history"), "lists valid names: {msg}");
 
-    // Nothing was persisted from the failed call.
     let config = FilterConfig::load().unwrap();
     assert!(!config.sync_artifacts.settings);
 }

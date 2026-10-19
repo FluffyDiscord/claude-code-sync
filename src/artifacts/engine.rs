@@ -1,8 +1,3 @@
-//! The artifact copy engine: registry-driven push/pull between `~/.claude`
-//! and the sync repository. Every function takes explicit paths — the
-//! `~/.claude` default is resolved by callers in `crate::sync` — so tests run
-//! against temp directories with no environment coupling.
-
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::fs;
@@ -20,8 +15,6 @@ use super::tracked::{self, SyncedHashes, TrackedPaths};
 use super::union_jsonl::merge_history_lines;
 use crate::later_timestamps::keep_later_timestamps;
 
-/// Whether one category participates for this configuration: toggles for the
-/// regular categories, the (inverted) attachments flag for ProjectAttachments.
 pub fn is_category_enabled(desc: &CategoryDescriptor, filter: &FilterConfig) -> bool {
     match desc.id {
         CategoryId::ProjectAttachments => !filter.exclude_attachments,
@@ -29,14 +22,12 @@ pub fn is_category_enabled(desc: &CategoryDescriptor, filter: &FilterConfig) -> 
     }
 }
 
-/// All registry rows active under this configuration.
 fn active_categories(
     filter: &FilterConfig,
 ) -> impl Iterator<Item = &'static CategoryDescriptor> + '_ {
     REGISTRY.iter().filter(|d| is_category_enabled(d, filter))
 }
 
-/// The sync-repo root directory for one category.
 fn category_repo_root(
     desc: &CategoryDescriptor,
     repo_root: &Path,
@@ -48,7 +39,6 @@ fn category_repo_root(
     }
 }
 
-/// True when a file extension is excluded for this category.
 fn extension_excluded(desc: &CategoryDescriptor, path: &Path) -> bool {
     path.extension()
         .and_then(|e| e.to_str())
@@ -60,7 +50,6 @@ fn extension_excluded(desc: &CategoryDescriptor, path: &Path) -> bool {
         .unwrap_or(false)
 }
 
-/// Per-category outcome counts for one push or pull.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct CategoryCounts {
     pub category: CategoryId,
@@ -70,14 +59,10 @@ pub struct CategoryCounts {
     pub modified: usize,
     #[serde(default)]
     pub unchanged: usize,
-    /// Files skipped (size cap, denied names).
     #[serde(default)]
     pub skipped: usize,
-    /// New lines contributed by a union merge (prompt history).
     #[serde(default)]
     pub merged_entries: usize,
-    /// Files removed because this machine synced them before and no longer has
-    /// them (only for categories that mirror deletions).
     #[serde(default)]
     pub deleted: usize,
 }
@@ -96,7 +81,6 @@ impl CategoryCounts {
     }
 }
 
-/// How one artifact file changed during a push or pull.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ArtifactChangeKind {
     Added,
@@ -104,20 +88,16 @@ pub enum ArtifactChangeKind {
     Deleted,
 }
 
-/// One file a push or pull actually added, modified or deleted.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ArtifactChange {
     pub category: CategoryId,
     pub kind: ArtifactChangeKind,
-    /// Path relative to the category's root, e.g. `my-skill/SKILL.md`.
     pub path: PathBuf,
 }
 
-/// Outcome of one artifact push or pull across all enabled categories.
 #[derive(Debug, Clone, Default)]
 pub struct ArtifactReport {
     pub counts: Vec<CategoryCounts>,
-    /// Every file written or removed, in the order it happened.
     pub changes: Vec<ArtifactChange>,
 }
 
@@ -143,8 +123,7 @@ impl ArtifactReport {
         });
     }
 
-    /// True when nothing was copied, merged, or even inspected.
-    #[allow(dead_code)] // used via the library target; the bin compiles this module separately
+    #[allow(dead_code)]
     pub fn is_empty(&self) -> bool {
         self.counts.is_empty()
             || self
@@ -154,8 +133,6 @@ impl ArtifactReport {
     }
 }
 
-/// One collected artifact file: its absolute source under `~/.claude` and its
-/// destination path relative to the category's repo subdirectory.
 struct CollectedFile {
     abs: PathBuf,
     rel: PathBuf,
@@ -170,12 +147,6 @@ fn walk_honoring_gitignores_inside(base: &Path) -> ignore::Walk {
         .build()
 }
 
-/// Enumerate a category's files on disk. Missing sources yield an empty list;
-/// denied paths and oversized files are skipped (the latter counted).
-///
-/// An oversized file still exists on this machine, so its category-relative
-/// path goes into `held_back`: deletion mirroring must not read "not pushed
-/// this time" as "deleted here" and remove every machine's copy.
 fn collect(
     desc: &CategoryDescriptor,
     claude_dir: &Path,
@@ -210,7 +181,6 @@ fn collect(
             if !base.is_dir() {
                 return Ok(files);
             }
-            // Resolved once per project: in name-only mode it reads a transcript.
             let mut project_names: std::collections::HashMap<String, String> =
                 std::collections::HashMap::new();
             for entry in walk_honoring_gitignores_inside(&base).filter_map(|e| e.ok()) {
@@ -219,8 +189,6 @@ fn collect(
                     continue;
                 }
                 let abs = entry.path();
-                // Deny rules match against the ~/.claude-relative path so a
-                // component like `cache/` is caught wherever it appears.
                 let claude_rel = abs.strip_prefix(claude_dir).unwrap_or(abs);
                 if is_denied(claude_rel) {
                     *skipped += 1;
@@ -230,8 +198,6 @@ fn collect(
                     continue;
                 }
                 let mut rel = abs.strip_prefix(&base).unwrap_or(abs).to_path_buf();
-                // Attachments take the project's repo-side directory name,
-                // mirroring session layout.
                 if desc.dest == DestRoot::SessionTree {
                     let mut parts = rel.components();
                     let Some(encoded) = parts.next().and_then(|c| c.as_os_str().to_str()) else {
@@ -267,9 +233,6 @@ fn collect(
     Ok(files)
 }
 
-/// Write `content` to `path` via a same-directory temp file + atomic rename,
-/// so a reader (or a crash) never sees a half-written file. `mode_source` is
-/// the file whose executable bit the result adopts.
 #[cfg_attr(not(unix), allow(unused_variables))]
 fn write_atomic(path: &Path, content: &[u8], mode_source: &Path) -> Result<()> {
     let parent = path
@@ -289,11 +252,6 @@ fn write_atomic(path: &Path, content: &[u8], mode_source: &Path) -> Result<()> {
     Ok(())
 }
 
-/// The mode a copy of `mode_source` should have at `destination`: what the
-/// destination already has, plus the owner's executable bit when the source is
-/// executable. Granting only: a repository written before this bit was synced
-/// holds every file non-executable, and a pull from it must not disarm the
-/// scripts on this machine.
 #[cfg(unix)]
 fn get_mode_for_copy(destination: &Path, mode_source: &Path) -> Option<u32> {
     use std::os::unix::fs::PermissionsExt;
@@ -309,10 +267,6 @@ fn get_mode_for_copy(destination: &Path, mode_source: &Path) -> Option<u32> {
     Some(base | 0o100)
 }
 
-/// Apply `mode` and report whether the file actually carries it afterwards. A
-/// filesystem without permission bits (exFAT, some CIFS mounts) either refuses
-/// the call or ignores it; either way the sync continues and the file counts as
-/// unchanged, instead of being offered again on every run.
 #[cfg(unix)]
 fn set_mode(path: &Path, mode: u32) -> bool {
     use std::os::unix::fs::PermissionsExt;
@@ -325,9 +279,6 @@ fn set_mode(path: &Path, mode: u32) -> bool {
     applied.is_ok_and(|applied| applied == mode)
 }
 
-/// Whether `path` is missing an executable bit that `mode_source` has. Content
-/// comparison alone never notices a `chmod +x`, which would leave the bit stuck
-/// at whatever it was when the file was first copied.
 #[cfg(unix)]
 fn executable_bit_differs(path: &Path, mode_source: &Path) -> bool {
     use std::os::unix::fs::PermissionsExt;
@@ -349,15 +300,11 @@ fn executable_bit_differs(_path: &Path, _mode_source: &Path) -> bool {
     false
 }
 
-/// A chmod follows symlinks, so it would reach a file outside `~/.claude` that
-/// a write never touches: `write_atomic` replaces the link itself.
 #[cfg(unix)]
 fn is_symlink(path: &Path) -> bool {
     fs::symlink_metadata(path).is_ok_and(|metadata| metadata.file_type().is_symlink())
 }
 
-/// Bring `path`'s executable bit in line with `mode_source`, reporting whether
-/// the file changed.
 #[cfg(unix)]
 fn align_executable_bit(path: &Path, mode_source: &Path) -> bool {
     if !executable_bit_differs(path, mode_source) {
@@ -374,11 +321,6 @@ fn align_executable_bit(_path: &Path, _mode_source: &Path) -> bool {
     false
 }
 
-/// Copy every enabled artifact category into `<repo_root>/artifacts/`,
-/// classifying each file Added/Modified/Unchanged by byte comparison.
-/// Prompt history and memory indexes are union-merged into the repo copy
-/// instead of overwritten, config files are path-tokenized, and a file this
-/// machine previously synced and has since deleted is removed from the repo.
 pub fn push_artifacts(
     claude_dir: &Path,
     repo_root: &Path,
@@ -402,8 +344,6 @@ pub fn push_artifacts(
         )?;
         let category_root = category_repo_root(desc, repo_root, filter);
         let mut pushed: TrackedPaths = TrackedPaths::new();
-        // Files kept back for their size are still here: count them as
-        // present so the repo copy (if any) is neither deleted nor forgotten.
         for rel in held_back {
             if let Some(rel) = repo_relative(repo_root, &category_root.join(rel)) {
                 pushed.insert(rel);
@@ -491,8 +431,6 @@ pub fn push_artifacts(
                 }
                 tracked_now.extend(pushed);
             } else {
-                // A category this machine does not have says nothing about
-                // what the others hold: leave the repo copy and the record.
                 log::info!(
                     "Category {} is not present under {}; its repo copy is left untouched",
                     desc.name,
@@ -511,15 +449,8 @@ pub fn push_artifacts(
     Ok(report)
 }
 
-/// Marker file that keeps a category's repo directory present once its last
-/// real file is deleted.
-///
-/// Git does not track directories, so an emptied category would disappear and
-/// be read as "this repo has no such category", which pull must not delete
-/// for. The marker distinguishes an empty category from an absent one.
 pub const CATEGORY_MARKER: &str = ".synced";
 
-/// Keep the category's repo directory alive across an emptying push.
 fn mark_category_synced(category_root: &Path) -> Result<()> {
     let marker = category_root.join(CATEGORY_MARKER);
     if marker.is_file() {
@@ -530,14 +461,11 @@ fn mark_category_synced(category_root: &Path) -> Result<()> {
     Ok(())
 }
 
-/// A repo path as a `/`-separated string relative to the repository root.
 fn repo_relative(repo_root: &Path, path: &Path) -> Option<String> {
     let rel = path.strip_prefix(repo_root).ok()?;
     Some(rel.to_string_lossy().replace('\\', "/"))
 }
 
-/// Whether this machine has the source a category copies from. A `Files`
-/// category is always "present": its individual files are optional.
 fn source_is_present(desc: &CategoryDescriptor, claude_dir: &Path) -> bool {
     match desc.source {
         SourceSpec::Files(_) => true,
@@ -545,7 +473,6 @@ fn source_is_present(desc: &CategoryDescriptor, claude_dir: &Path) -> bool {
     }
 }
 
-/// The tracked paths that belong to one category's repo directory.
 fn tracked_under(tracked: &TrackedPaths, category_root: &Path, repo_root: &Path) -> Vec<String> {
     let Some(prefix) = repo_relative(repo_root, category_root) else {
         return Vec::new();
@@ -558,8 +485,6 @@ fn tracked_under(tracked: &TrackedPaths, category_root: &Path, repo_root: &Path)
         .collect()
 }
 
-/// Delete the repo copies of files this machine synced before and no longer
-/// has. Returns the removed paths, relative to the category root.
 fn remove_from_repo(
     tracked_before: &TrackedPaths,
     pushed: &TrackedPaths,
@@ -586,78 +511,44 @@ fn remove_from_repo(
     Ok(removed)
 }
 
-/// One planned local write during a pull.
 #[derive(Debug, Clone)]
 pub struct PlannedWrite {
     pub category: CategoryId,
-    /// Absolute destination under `~/.claude`.
     pub local_path: PathBuf,
-    /// Absolute source inside the sync repository.
     pub repo_path: PathBuf,
-    /// Path relative to the category's root, as reported to the user.
     pub category_path: PathBuf,
 }
 
-/// Read-only classification of an artifact pull, computed BEFORE any write so
-/// the caller can snapshot the exact set of files that will change.
 #[derive(Debug, Default)]
 pub struct PullPlan {
-    /// Local file exists and repo bytes differ: remote wins after snapshot.
     pub overwrites: Vec<PlannedWrite>,
-    /// This machine and the remote both changed the file since they last
-    /// agreed on it.
     pub changed_on_both_sides: Vec<PlannedWrite>,
-    /// Edited or deleted here since the last sync, while the repo copy stayed
-    /// as it was: left alone for the next push.
     pub kept_local: Vec<PlannedWrite>,
-    /// Whether a person is at a terminal to settle a file both sides changed.
     pub can_ask: bool,
-    /// No local file yet: created, and recorded for deletion on undo.
     pub creates: Vec<PlannedWrite>,
-    /// Union-merge targets whose local file would gain lines.
     pub unions: Vec<PlannedWrite>,
-    /// Local files whose content already matches but whose executable bit does
-    /// not: a `chmod +x` elsewhere, with nothing to rewrite.
     pub mode_fixes: Vec<PlannedWrite>,
-    /// Local files this machine synced before that the repo no longer has.
     pub deletes: Vec<PlannedDelete>,
     pub unchanged: usize,
-    /// Repo files refused (denied names, unsafe paths).
     pub skipped: usize,
-    /// Repo files whose project this machine has no destination for, grouped
-    /// by the project directory they came from, so the caller can warn once
-    /// per project instead of once per file.
     pub unmapped_projects: crate::project_map::SkippedByProject,
-    /// This machine's path tokens, so applying renders repo bytes the same way
-    /// planning compared them.
     pub tokens: PathTokens,
-    /// Where to record what this machine holds once the plan is applied.
     pub claude_dir: PathBuf,
     pub repo_root: PathBuf,
-    /// The configured external merge tool, offered when a file differs.
     pub merge_tool: String,
-    /// Whether the overwrite prompt starts on the merge tool.
     pub prefer_merge_tool: bool,
-    /// The repo paths this machine will hold afterwards, for the next pull to
-    /// tell a deletion from a file it never had.
     pub tracked_after: TrackedPaths,
-    /// Whether any active category mirrors deletions. When none does, the
-    /// record is left untouched rather than emptied.
     pub tracks_deletions: bool,
 }
 
-/// One planned local deletion during a pull.
 #[derive(Debug, Clone)]
 pub struct PlannedDelete {
     pub category: CategoryId,
-    /// Absolute path under `~/.claude` to remove.
     pub local_path: PathBuf,
-    /// Path relative to the category's root, as reported to the user.
     pub category_path: PathBuf,
 }
 
 impl PullPlan {
-    /// True when applying the plan would write nothing.
     pub fn is_empty(&self) -> bool {
         self.overwrites.is_empty()
             && self.changed_on_both_sides.is_empty()
@@ -667,13 +558,6 @@ impl PullPlan {
             && self.deletes.is_empty()
     }
 
-    /// Existing local files the caller must snapshot before applying
-    /// (overwritten raw files, union-merged files and deletions — a snapshot is
-    /// what makes `undo pull` able to bring a deleted file back).
-    ///
-    /// The record of what this machine last synced is included whenever the
-    /// pull would rewrite it, so undoing a pull restores the files *and* the
-    /// record that describes them.
     pub fn paths_to_snapshot(&self) -> Vec<PathBuf> {
         let record = tracked::record_path(&self.claude_dir);
         self.overwrites
@@ -686,8 +570,6 @@ impl PullPlan {
             .collect()
     }
 
-    /// Local paths this pull will create; recording them as a snapshot's
-    /// `deleted_files` makes undo remove them again.
     pub fn created_paths(&self) -> Vec<String> {
         let record = tracked::record_path(&self.claude_dir);
         let record_is_new = !record.is_file();
@@ -700,9 +582,6 @@ impl PullPlan {
     }
 }
 
-/// Enumerate one category's files as stored in the sync repository, returning
-/// (absolute repo path, path relative to the category subdir). Denied and
-/// unsafe paths are refused here, so nothing below ever sees them.
 fn collect_repo_files(
     desc: &CategoryDescriptor,
     repo_root: &Path,
@@ -732,7 +611,6 @@ fn collect_repo_files(
         if extension_excluded(desc, &rel) {
             continue;
         }
-        // The marker exists to keep the directory, and belongs to no machine.
         if rel == Path::new(CATEGORY_MARKER) {
             continue;
         }
@@ -757,18 +635,11 @@ fn collect_repo_files(
     files
 }
 
-/// Why a repo file has no local destination. The caller reports the two cases
-/// differently: an unmapped project is one warning for all of its files, an
-/// unrestorable path is a refusal worth its own line.
 enum SkipReason {
-    /// This machine has no directory for the named sync-repo project.
     UnmappedProject(String),
-    /// Nothing in the category can receive this path.
     NotRestorable,
 }
 
-/// Map a category-relative repo path back to its absolute local destination
-/// under `~/.claude`, or the reason it has none.
 fn local_destination(
     desc: &CategoryDescriptor,
     claude_dir: &Path,
@@ -776,10 +647,6 @@ fn local_destination(
     filter: &FilterConfig,
 ) -> Result<PathBuf, SkipReason> {
     match desc.source {
-        // File lists are stored flat in the repo; restore to the listed
-        // location whose file name matches. An unlisted name has NO valid
-        // destination — the allowlist must hold on pull as well as push, or a
-        // poisoned repo could plant arbitrary files at the top of ~/.claude.
         SourceSpec::Files(list) => list
             .iter()
             .find(|entry| Path::new(entry).file_name() == rel.file_name())
@@ -787,8 +654,6 @@ fn local_destination(
             .ok_or(SkipReason::NotRestorable),
         SourceSpec::Dir(dir) => {
             if desc.dest == DestRoot::SessionTree {
-                // Repo path is <project-dir>/<rest>; resolve the leading
-                // component the way session pull does.
                 let split = crate::project_map::split_project_path(rel);
                 let (project, inside_project) = split.ok_or(SkipReason::NotRestorable)?;
                 let projects_dir = claude_dir.join(dir);
@@ -802,8 +667,6 @@ fn local_destination(
     }
 }
 
-/// The bytes a repo file becomes on this machine before any merge: rendered
-/// back from tokens for config categories, verbatim otherwise.
 fn machine_bytes(
     desc: &CategoryDescriptor,
     tokens: &PathTokens,
@@ -817,9 +680,6 @@ fn machine_bytes(
     Ok(bytes)
 }
 
-/// A local file's bytes in the spelling [`machine_bytes`] renders, so the two
-/// compare equal when they hold the same paths: Windows writes `C:\\Users\\me`,
-/// the rendering `C:/Users/me`.
 fn local_machine_bytes(
     desc: &CategoryDescriptor,
     tokens: &PathTokens,
@@ -833,8 +693,6 @@ fn local_machine_bytes(
     Ok(bytes)
 }
 
-/// Remember, per artifact, the version this machine and the repo now agree on.
-/// A path they disagree on keeps the hash they last agreed on.
 pub fn record_synced_hashes(
     claude_dir: &Path,
     repo_root: &Path,
@@ -890,7 +748,6 @@ fn read_agreed_hash(
     Ok(both_hold_it.then(|| tracked::hash_content(&local_bytes)))
 }
 
-/// The registry row for one category.
 pub(crate) fn descriptor(id: CategoryId) -> &'static CategoryDescriptor {
     REGISTRY
         .iter()
@@ -898,12 +755,6 @@ pub(crate) fn descriptor(id: CategoryId) -> &'static CategoryDescriptor {
         .expect("every CategoryId has a registry row")
 }
 
-/// Classify what a pull would write, without writing. For raw categories only
-/// the side that changed since this machine last synced wins: remote changes
-/// are written, local edits and deletions stay for the push, and a file both
-/// sides changed is settled when applying. Without a record of the last sync,
-/// remote (repo) bytes win. Union targets are compared against local ∪ remote;
-/// a file this machine synced before and the repo no longer has is a deletion.
 pub fn plan_pull(claude_dir: &Path, repo_root: &Path, filter: &FilterConfig) -> Result<PullPlan> {
     let mut plan = PullPlan {
         tokens: PathTokens::for_claude_dir(claude_dir),
@@ -1040,8 +891,6 @@ pub fn plan_pull(claude_dir: &Path, repo_root: &Path, filter: &FilterConfig) -> 
             continue;
         }
 
-        // Mirror of the push-side guard: a category the repo does not have —
-        // an older or rewound branch — is not "everything was deleted".
         if !category_root.is_dir() {
             log::info!(
                 "Category {} is not present in {}; local files are left alone",
@@ -1061,8 +910,6 @@ pub fn plan_pull(claude_dir: &Path, repo_root: &Path, filter: &FilterConfig) -> 
                 .strip_prefix(repo_relative(repo_root, &category_root).unwrap_or_default())
                 .map(Path::to_path_buf)
                 .unwrap_or_default();
-            // The same refusal `collect_repo_files` applies: a record must
-            // never point a deletion outside its category.
             if is_unsafe_rel_path(&rel) || is_denied(&rel) {
                 log::warn!("Refusing denied/unsafe tracked path: {gone}");
                 plan.skipped += 1;
@@ -1102,13 +949,6 @@ pub fn plan_pull(claude_dir: &Path, repo_root: &Path, filter: &FilterConfig) -> 
     Ok(plan)
 }
 
-/// Apply a pull plan: create missing files, overwrite the ones only the remote
-/// changed, settle the ones both sides changed (later dates, else ask when
-/// `plan.can_ask`, else keep local), union-merge prompt history and memory
-/// indexes, and remove files the repo no longer has. Under `interactive` in a
-/// terminal, each overwrite asks for per-file confirmation — with the
-/// configured merge tool as an option — and each deletion asks for
-/// confirmation; declined files count as skipped.
 pub fn apply_pull(plan: &PullPlan, interactive: bool) -> Result<ArtifactReport> {
     use std::collections::HashMap;
 
@@ -1281,7 +1121,6 @@ pub fn apply_pull(plan: &PullPlan, interactive: bool) -> Result<ArtifactReport> 
     Ok(report)
 }
 
-/// Ask before making a local file runnable, since a hook runs on its own.
 fn confirm_executable(local_path: &Path) -> bool {
     let file_name = local_path
         .file_name()
@@ -1293,7 +1132,6 @@ fn confirm_executable(local_path: &Path) -> bool {
         .unwrap_or(false)
 }
 
-/// Ask before removing a local file the sync repo no longer has.
 fn confirm_deletion(local_path: &Path) -> bool {
     let file_name = local_path
         .file_name()
@@ -1306,8 +1144,6 @@ fn confirm_deletion(local_path: &Path) -> bool {
         .unwrap_or(false)
 }
 
-/// Globs for the managed ignore block: defense-in-depth behind the code-level
-/// denylist, in case files land in the repo by hand or via other tools.
 const IGNORE_GLOBS: &[&str] = &[
     ".credentials.json",
     "settings.local.json",
@@ -1334,7 +1170,6 @@ const IGNORE_GLOBS: &[&str] = &[
 const IGNORE_BLOCK_START: &str = "# >>> claude-code-sync managed block — do not edit inside";
 const IGNORE_BLOCK_END: &str = "# <<< claude-code-sync managed block";
 
-/// Build the full managed block.
 fn ignore_block() -> String {
     let mut block = String::new();
     block.push_str(IGNORE_BLOCK_START);
@@ -1348,9 +1183,6 @@ fn ignore_block() -> String {
     block
 }
 
-/// Write the managed never-sync ignore block into the sync repository's
-/// `.gitignore`. Idempotent; preserves user content outside the block.
-/// Returns whether the file changed.
 pub fn ensure_ignore_files(repo_root: &Path) -> Result<bool> {
     let path = repo_root.join(".gitignore");
     let existing = if path.is_file() {
@@ -1365,9 +1197,7 @@ pub fn ensure_ignore_files(repo_root: &Path) -> Result<bool> {
         existing.find(IGNORE_BLOCK_START),
         existing.find(IGNORE_BLOCK_END),
     ) {
-        // Replace the existing block in place.
         let end = end + IGNORE_BLOCK_END.len();
-        // Include the trailing newline of the old block if present.
         let end = if existing[end..].starts_with('\n') {
             end + 1
         } else {

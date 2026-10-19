@@ -1,7 +1,3 @@
-//! Integration tests for the portability additions: the project map, path
-//! tokenizing, memory-index union and deletion mirroring. Two temp `~/.claude`
-//! trees stand in for two machines sharing one sync repository.
-
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -33,15 +29,10 @@ fn write(path: &Path, contents: &str) {
     fs::write(path, contents).unwrap();
 }
 
-/// A `settings.json` with one Stop hook running `command`, serialized the way
-/// Claude Code writes it: a Windows path's backslashes are JSON-escaped
-/// (`C:\\Users\\me`), which is the spelling the tokenizer has to match.
 fn stop_hook_settings(command: &str) -> String {
     serde_json::json!({"hooks": {"Stop": [{"command": command}]}}).to_string()
 }
 
-/// The Stop hook command a `settings.json` renders to; parsing it also proves
-/// the rendered file is still valid JSON.
 fn stop_hook_command(settings: &str) -> String {
     let parsed: serde_json::Value = serde_json::from_str(settings).unwrap();
     parsed["hooks"]["Stop"][0]["command"]
@@ -50,7 +41,6 @@ fn stop_hook_command(settings: &str) -> String {
         .to_string()
 }
 
-/// How `path` is spelled inside a JSON string in a file on disk.
 fn json_spelling(path: &Path) -> String {
     let quoted = serde_json::to_string(&path.display().to_string()).unwrap();
     quoted[1..quoted.len() - 1].to_string()
@@ -186,8 +176,6 @@ fn mapped_projects_only_pulls_just_the_mapped_project_without_warning() {
     );
 }
 
-/// Guards the reason no hold-back is needed: attachments never mirror
-/// deletions, so a project left out of sync loses nothing on either side.
 #[test]
 fn mapped_projects_only_keeps_the_repo_copy_of_a_project_it_stops_syncing() {
     let repo = TempDir::new().unwrap();
@@ -335,7 +323,6 @@ fn a_skill_grown_past_the_size_limit_is_not_mistaken_for_a_deletion() {
     sync_both_ways(machine_a.path(), repo.path(), &all_on_filter());
     sync_both_ways(machine_b.path(), repo.path(), &all_on_filter());
 
-    // The skill still exists on machine A; it has only outgrown the limit.
     let mut small_limit = all_on_filter();
     small_limit.max_file_size_bytes = 4;
     let report = push_artifacts(machine_a.path(), repo.path(), &small_limit).unwrap();
@@ -448,8 +435,6 @@ fn a_machine_that_never_synced_deletes_nothing() {
     );
     push_artifacts(machine_a.path(), repo.path(), &all_on_filter()).unwrap();
 
-    // B has never received anything, so it has no record and must not read its
-    // empty skills directory as "everything was deleted".
     fs::create_dir_all(machine_b.path().join("skills")).unwrap();
     push_artifacts(machine_b.path(), repo.path(), &all_on_filter()).unwrap();
 
@@ -481,7 +466,6 @@ fn a_machine_missing_the_category_entirely_leaves_the_repo_alone() {
     );
 }
 
-/// Run a git command in `repo`, failing loudly.
 fn git(repo: &Path, args: &[&str]) {
     let status = std::process::Command::new("git")
         .args(args)
@@ -504,7 +488,6 @@ fn deleting_the_last_file_of_a_category_survives_a_commit_and_clone() {
     git(origin.path(), &["init", "-q", "-b", "main"]);
     write(&machine_a.path().join("skills/only/SKILL.md"), "# only\n");
 
-    // A publishes the skill; B picks it up from a clone of the repo.
     push_artifacts(machine_a.path(), origin.path(), &all_on_filter()).unwrap();
     git(origin.path(), &["add", "-A"]);
     git(origin.path(), &["commit", "-qm", "add skill"]);
@@ -515,9 +498,6 @@ fn deleting_the_last_file_of_a_category_survives_a_commit_and_clone() {
     sync_both_ways(machine_b.path(), clone.path(), &all_on_filter());
     assert!(machine_b.path().join("skills/only/SKILL.md").is_file());
 
-    // A deletes its last skill and publishes that. Git does not track empty
-    // directories, so without a marker the category would vanish from the
-    // clone and read as "this repo has no skills" instead of "no skills left".
     fs::remove_dir_all(machine_a.path().join("skills/only")).unwrap();
     push_artifacts(machine_a.path(), origin.path(), &all_on_filter()).unwrap();
     git(origin.path(), &["add", "-A"]);
@@ -533,7 +513,6 @@ fn deleting_the_last_file_of_a_category_survives_a_commit_and_clone() {
 
     assert_eq!(report.total_deleted(), 1);
     assert!(!machine_b.path().join("skills/only/SKILL.md").exists());
-    // And nothing resurrects it: B's next push leaves the repo empty.
     push_artifacts(machine_b.path(), clone.path(), &all_on_filter()).unwrap();
     assert!(!clone.path().join("artifacts/skills/only/SKILL.md").exists());
 }
@@ -566,8 +545,6 @@ fn a_category_the_repo_does_not_have_deletes_nothing_locally() {
     sync_both_ways(machine_b.path(), repo.path(), &all_on_filter());
     assert!(machine_b.path().join("skills/shared/SKILL.md").is_file());
 
-    // A rewound branch, an older branch or `undo push` can all leave the repo
-    // without the category — which says nothing about the other machines.
     fs::remove_dir_all(repo.path().join("artifacts/skills")).unwrap();
     let plan = plan_pull(machine_b.path(), repo.path(), &all_on_filter()).unwrap();
     apply_pull(&plan, false).unwrap();
@@ -584,9 +561,6 @@ fn a_category_the_repo_does_not_have_deletes_nothing_locally() {
 fn a_home_path_in_settings_is_stored_as_a_token() {
     let repo = TempDir::new().unwrap();
     let claude = TempDir::new().unwrap();
-    // Both machines in this process share one home directory, so this can only
-    // show that the home path is neutralized on the way in; rendering it back
-    // per machine is covered by the unit tests in artifacts::tokens.
     let Some(home) = dirs::home_dir() else {
         return;
     };
@@ -632,9 +606,6 @@ fn write_executable(path: &Path, contents: &str) {
     fs::set_permissions(path, fs::Permissions::from_mode(0o755)).unwrap();
 }
 
-/// settings.json names hook scripts by path, so the scripts have to travel
-/// with it -- and a hook that arrives without its executable bit is a hook
-/// Claude Code cannot run.
 #[cfg(unix)]
 #[test]
 fn a_hook_arrives_on_the_other_machine_ready_to_run() {
@@ -659,9 +630,6 @@ fn a_hook_arrives_on_the_other_machine_ready_to_run() {
     assert!(is_executable(&landed));
 }
 
-/// Only the executable bit travels. A pull must never hand out read rights the
-/// local file did not give away: prompt history, plans and settings are private
-/// files on a shared machine.
 #[cfg(unix)]
 #[test]
 fn a_pull_does_not_widen_a_private_local_file() {
@@ -688,9 +656,6 @@ fn a_pull_does_not_widen_a_private_local_file() {
     assert!(!is_executable(&private));
 }
 
-/// Every repository written before the bit was synced holds its files
-/// non-executable, so a pull from one must leave this machine's scripts alone
-/// rather than disarm them — and `sync` pulls before it pushes.
 #[cfg(unix)]
 #[test]
 fn a_pull_does_not_disarm_a_local_script() {
@@ -698,7 +663,6 @@ fn a_pull_does_not_disarm_a_local_script() {
     let claude = TempDir::new().unwrap();
     let script = "#!/bin/bash\nexit 0\n";
     write_executable(&claude.path().join("hooks/rule-check.sh"), script);
-    // What an older version left in the repo: same bytes, no executable bit.
     write(&repo.path().join("artifacts/hooks/rule-check.sh"), script);
 
     let plan = plan_pull(claude.path(), repo.path(), &all_on_filter()).unwrap();
@@ -707,8 +671,6 @@ fn a_pull_does_not_disarm_a_local_script() {
     assert!(is_executable(&claude.path().join("hooks/rule-check.sh")));
 }
 
-/// A `chmod +x` changes no bytes, so content comparison alone would leave the
-/// other machine running a script it cannot execute.
 #[cfg(unix)]
 #[test]
 fn making_a_hook_executable_reaches_the_other_machine_on_its_own() {

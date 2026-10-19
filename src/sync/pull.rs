@@ -21,13 +21,6 @@ use super::discovery::{claude_home_dir, claude_projects_dir, discover_sessions, 
 use super::state::SyncState;
 use super::MAX_CONVERSATIONS_TO_DISPLAY;
 
-/// The file in `~/.claude/projects` a transcript in the sync repository
-/// belongs to, or `None` when this machine has no project for it.
-///
-/// This is the identity a pull pairs on. Two transcripts that share an
-/// interior session id — a session resumed in another project, and every
-/// subagent of a session — are different conversations living in different
-/// files, and only the file says which copy is which.
 fn local_destination(
     remote_session: &ConversationSession,
     remote_projects_dir: &Path,
@@ -66,7 +59,6 @@ fn settle_conflict(
     crate::merge_tool::resolve_conflict(&filter.merge_tool, filter.prefer_merge_tool, file)
 }
 
-/// Pull and merge history from sync repository
 pub fn pull_history(
     fetch_remote: bool,
     branch: Option<&str>,
@@ -84,7 +76,6 @@ pub fn pull_history(
     let filter = FilterConfig::load()?;
     let claude_dir = claude_projects_dir()?;
 
-    // Get the current branch name for operation record
     let branch_name = branch
         .map(|s| s.to_string())
         .or_else(|| repo.current_branch().ok())
@@ -92,13 +83,9 @@ pub fn pull_history(
 
     super::commit_sync_attributes(&repo, &state.sync_repo_path)?;
 
-    // Fetch from remote if configured
     if fetch_remote && state.has_remote {
         println!("  {} from remote...", "Fetching".cyan());
 
-        // Merging a stale sync repository into ~/.claude looks like a
-        // successful pull and silently loses whatever the remote holds, so a
-        // remote that cannot be reached or reconciled stops the pull instead.
         let resolve_conflict = |file: &ConflictedFile| {
             let can_ask = interactive_conflict::is_interactive();
             settle_conflict(file, can_ask, &filter)
@@ -112,12 +99,9 @@ pub fn pull_history(
             )?;
         println!("  {} Pulled from origin/{}", "✓".green(), branch_name);
 
-        // A first pull into a repository with no commits of its own sets the
-        // uncommitted rules aside; restore and commit them now.
         super::commit_sync_attributes(&repo, &state.sync_repo_path)?;
     }
 
-    // Discover local sessions
     println!("  {} local sessions...", "Discovering".cyan());
     let local_sessions = discover_sessions(&claude_dir, &filter)?;
     println!(
@@ -126,7 +110,6 @@ pub fn pull_history(
         local_sessions.len()
     );
 
-    // Discover remote sessions
     let remote_projects_dir = state.sync_repo_path.join(&filter.sync_subdirectory);
     println!("  {} remote sessions...", "Discovering".cyan());
     let remote_sessions = discover_sessions(&remote_projects_dir, &filter)?;
@@ -136,10 +119,6 @@ pub fn pull_history(
         remote_sessions.len()
     );
 
-    // ============================================================================
-    // CONFLICT DETECTION (moved before snapshot for efficiency)
-    // ============================================================================
-    // Detect conflicts FIRST so we only backup files that will be modified
     if verbosity != VerbosityLevel::Quiet {
         println!("  {} conflicts...", "Detecting".cyan());
     }
@@ -160,21 +139,10 @@ pub fn pull_history(
     let mut detector = ConflictDetector::new();
     detector.detect(&paired);
 
-    // ============================================================================
-    // ARTIFACT PULL PLAN (read-only, so the snapshot below can cover it)
-    // ============================================================================
     let mut artifact_plan =
         crate::artifacts::engine::plan_pull(&claude_home_dir()?, &state.sync_repo_path, &filter)?;
     artifact_plan.can_ask = interactive_conflict::is_interactive();
 
-    // ============================================================================
-    // SNAPSHOT CREATION: Only backup files that will actually change
-    // ============================================================================
-    // Optimization: Only backup local files that have conflicts and will be merged,
-    // plus artifact files this pull will overwrite. Files that are new (remote-only)
-    // or unchanged don't need backup — created artifact paths are recorded as
-    // deleted_files so undo removes them again.
-    // This reduces snapshot size from potentially gigabytes to typically <1MB.
     let snapshot_path = if detector.has_conflicts() || !artifact_plan.is_empty() {
         let mut files_to_snapshot: Vec<PathBuf> = detector
             .conflicts()
@@ -189,21 +157,13 @@ pub fn pull_history(
             files_to_snapshot.len()
         );
 
-        // Check for large conversation files and warn users
         warn_large_files(&files_to_snapshot);
 
-        // Create snapshot of ONLY files this pull will modify
-        let mut snapshot = Snapshot::create(
-            OperationType::Pull,
-            files_to_snapshot.iter(),
-            None, // No git manager needed for pull snapshots
-        )
-        .context("Failed to create snapshot before pull")?;
+        let mut snapshot = Snapshot::create(OperationType::Pull, files_to_snapshot.iter(), None)
+            .context("Failed to create snapshot before pull")?;
 
-        // Artifact files the pull will create: undo deletes them again.
         snapshot.deleted_files = artifact_plan.created_paths();
 
-        // Save snapshot to disk
         let path = snapshot
             .save_to_disk(None)
             .context("Failed to save snapshot to disk")?;
@@ -225,9 +185,6 @@ pub fn pull_history(
         None
     };
 
-    // ============================================================================
-    // SHOW SUMMARY AND INTERACTIVE CONFIRMATION
-    // ============================================================================
     if verbosity != VerbosityLevel::Quiet {
         println!();
         println!("{}", "Pull Summary:".bold().cyan());
@@ -240,7 +197,6 @@ pub fn pull_history(
         println!();
     }
 
-    // Show detailed file list in verbose mode
     if verbosity == VerbosityLevel::Verbose {
         println!("{}", "Remote sessions to be pulled:".bold());
         for (idx, session) in remote_sessions.iter().enumerate().take(20) {
@@ -262,7 +218,6 @@ pub fn pull_history(
         println!();
     }
 
-    // Interactive confirmation
     if interactive && interactive_conflict::is_interactive() {
         let confirm = Confirm::new("Pull?")
             .with_default(true)
@@ -275,10 +230,6 @@ pub fn pull_history(
         }
     }
 
-    // ============================================================================
-    // CONFLICT RESOLUTION (detection already done above)
-    // ============================================================================
-    // Track affected conversations for operation record
     let mut affected_conversations: Vec<ConversationSummary> = Vec::new();
 
     if detector.has_conflicts() {
@@ -288,9 +239,6 @@ pub fn pull_history(
             detector.conflict_count()
         );
 
-        // ============================================================================
-        // ATTEMPT SMART MERGE FIRST
-        // ============================================================================
         println!("  {} smart merge...", "Attempting".cyan());
 
         let remote_by_path: HashMap<&Path, &ConversationSession> = remote_sessions
@@ -302,14 +250,10 @@ pub fn pull_history(
         let mut smart_merge_failed_conflicts = Vec::new();
 
         for conflict in detector.conflicts_mut() {
-            // The two transcripts this conflict is between, by their own paths:
-            // an interior session id is shared by every subagent of a session,
-            // and by a session resumed in another project.
             if let (Some(local_session), Some(remote_session)) = (
                 local_by_path.get(conflict.local_file.as_path()),
                 remote_by_path.get(conflict.remote_file.as_path()),
             ) {
-                // Try smart merge
                 match conflict.smart_merge_into_local_file(local_session, remote_session) {
                     Ok(()) => {
                         smart_merge_success_count += 1;
@@ -343,7 +287,6 @@ pub fn pull_history(
             detector.conflict_count()
         );
 
-        // If some smart merges failed, handle them with interactive/keep-both resolution
         let renames = if !smart_merge_failed_conflicts.is_empty() {
             println!(
                 "  {} {} conflicts require manual resolution",
@@ -351,11 +294,9 @@ pub fn pull_history(
                 smart_merge_failed_conflicts.len()
             );
 
-            // Check if we can run interactively
             let use_interactive = crate::interactive_conflict::is_interactive();
 
             if use_interactive {
-                // Interactive conflict resolution for failed merges
                 println!(
                     "\n{} Running in interactive mode for remaining conflicts",
                     "→".cyan()
@@ -365,7 +306,6 @@ pub fn pull_history(
                     &mut smart_merge_failed_conflicts,
                 )?;
 
-                // Apply the resolutions
                 let renames = crate::interactive_conflict::apply_resolutions(
                     &resolution_result,
                     &remote_sessions,
@@ -373,13 +313,11 @@ pub fn pull_history(
                     &remote_projects_dir,
                 )?;
 
-                // Save conflict report
                 let report = ConflictReport::from_conflicts(detector.conflicts());
                 save_conflict_report(&report)?;
 
                 renames
             } else {
-                // Non-interactive mode: use "keep both" strategy for failed merges
                 println!(
                     "\n{} Using automatic conflict resolution (keep both versions)",
                     "→".cyan()
@@ -402,7 +340,6 @@ pub fn pull_history(
                             relative_renamed.display().to_string().cyan()
                         );
 
-                        // Find and write the remote session
                         if let Some(session) = remote_sessions
                             .iter()
                             .find(|s| s.session_id == conflict.session_id)
@@ -414,18 +351,15 @@ pub fn pull_history(
                     }
                 }
 
-                // Save conflict report
                 let report = ConflictReport::from_conflicts(detector.conflicts());
                 save_conflict_report(&report)?;
 
                 renames
             }
         } else {
-            // All conflicts resolved via smart merge
             Vec::new()
         };
 
-        // Track all conflicts in affected conversations
         for (_original_path, renamed_path) in &renames {
             let relative_path = renamed_path
                 .strip_prefix(&claude_dir)
@@ -433,11 +367,9 @@ pub fn pull_history(
                 .to_string_lossy()
                 .to_string();
 
-            // Find the session ID from the renamed path
             if let Some(session) = remote_sessions.iter().find(|s| {
                 let session_file = s.file_path.file_name();
                 let renamed_file = renamed_path.file_name();
-                // Try to match based on session ID in filename
                 session_file
                     .and_then(|f| f.to_str())
                     .and_then(|name| name.split('-').next())
@@ -470,9 +402,6 @@ pub fn pull_history(
         println!("  {} No conflicts detected", "✓".green());
     }
 
-    // ============================================================================
-    // MERGE NON-CONFLICTING SESSIONS
-    // ============================================================================
     println!("  {} non-conflicting sessions...", "Merging".cyan());
     let mut merged_count = 0;
     let mut added_count = 0;
@@ -507,7 +436,6 @@ pub fn pull_history(
             continue;
         };
 
-        // A conflicting transcript is merged above, not overwritten here.
         if detector
             .conflicts()
             .iter()
@@ -521,7 +449,6 @@ pub fn pull_history(
             .map(|p| p.to_path_buf())
             .unwrap_or_else(|_| remote_relative.to_path_buf());
 
-        // Determine operation type based on local state
         let operation = if let Some(local) = local_by_path.get(dest_path.as_path()) {
             if local.content_hash() == remote_session.content_hash() {
                 unchanged_count += 1;
@@ -535,13 +462,11 @@ pub fn pull_history(
             SyncOperation::Added
         };
 
-        // Copy file if it's not unchanged
         if operation != SyncOperation::Unchanged {
             remote_session.copy_to(&dest_path)?;
             merged_count += 1;
         }
 
-        // Track all sessions (including unchanged) in affected conversations
         let relative_path_str = relative_path_for_tracking.to_string_lossy().to_string();
         match ConversationSummary::new(
             remote_session.session_id.clone(),
@@ -565,9 +490,6 @@ pub fn pull_history(
         log::warn!("{line}");
     }
 
-    // ============================================================================
-    // APPLY ARTIFACT PULL PLAN (remote-only changes win; snapshot covers changes)
-    // ============================================================================
     let artifact_report = crate::artifacts::engine::apply_pull(&artifact_plan, interactive)?;
     crate::artifacts::engine::record_synced_hashes(
         &claude_home_dir()?,
@@ -587,20 +509,15 @@ pub fn pull_history(
         }
     }
 
-    // ============================================================================
-    // CREATE AND SAVE OPERATION RECORD
-    // ============================================================================
     let mut operation_record = OperationRecord::new(
         OperationType::Pull,
         Some(branch_name.clone()),
         affected_conversations.clone(),
     );
 
-    // Attach the snapshot path to the operation record (only if we created one)
     operation_record.snapshot_path = snapshot_path;
     operation_record.artifact_counts = artifact_report.counts.clone();
 
-    // Load operation history and add this operation
     let mut history = match OperationHistory::load() {
         Ok(h) => h,
         Err(e) => {
@@ -615,12 +532,8 @@ pub fn pull_history(
         log::info!("Pull completed successfully, but history was not updated.");
     }
 
-    // ============================================================================
-    // DISPLAY SUMMARY TO USER
-    // ============================================================================
     println!("\n{}", "=== Pull Summary ===".bold().cyan());
 
-    // Show operation statistics
     let conflict_count = detector.conflict_count();
     let stats_msg = format!(
         "  {} Added    {} Modified    {} Conflicts    {} Unchanged",
@@ -649,10 +562,8 @@ pub fn pull_history(
     }
     println!();
 
-    // Group conversations by project (top-level directory)
     let mut by_project: HashMap<String, Vec<&ConversationSummary>> = HashMap::new();
     for conv in &affected_conversations {
-        // Skip unchanged conversations in detailed output
         if conv.operation == SyncOperation::Unchanged {
             continue;
         }
@@ -666,7 +577,6 @@ pub fn pull_history(
         by_project.entry(project).or_default().push(conv);
     }
 
-    // Display conversations grouped by project
     if !by_project.is_empty() {
         println!("{}", "Affected Conversations:".bold());
 
@@ -688,10 +598,7 @@ pub fn pull_history(
                 let timestamp_str = conv
                     .timestamp
                     .as_ref()
-                    .and_then(|t| {
-                        // Extract just the date portion for compact display
-                        t.split('T').next()
-                    })
+                    .and_then(|t| t.split('T').next())
                     .unwrap_or("unknown");
 
                 println!(
@@ -717,7 +624,6 @@ pub fn pull_history(
 
     println!("\n{}", "Pull complete!".green().bold());
 
-    // Clean up old snapshots automatically
     if let Err(e) = crate::undo::cleanup_old_snapshots(None, false) {
         log::warn!("Failed to cleanup old snapshots: {}", e);
     }

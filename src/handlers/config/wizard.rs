@@ -1,12 +1,3 @@
-//! Wizard-mode configuration: walk every setting in order, gating each one
-//! behind a yes/no question.
-//!
-//! This is intentionally not the same UX as `interactive.rs`. The wizard asks
-//! "Do you want to ...?" first and only prompts for a value on yes, and it has
-//! no "empty clears the setting" affordance — an empty pattern list here simply
-//! parses to `[]` and is reported as such. Both flows share the value logic in
-//! `fields.rs`, not the prompt shape.
-
 use anyhow::{Context, Result};
 use colored::Colorize;
 use inquire::{Confirm, Text};
@@ -15,9 +6,6 @@ use super::fields::{format_patterns, format_size_mb, parse_file_size_mb, parse_p
 use super::prompts::{current_age, display_config_summary, prompt_artifact_toggle_selection};
 use crate::filter::FilterConfig;
 
-/// Handle wizard-mode configuration
-///
-/// Steps through each configuration option one by one
 pub fn handle_config_wizard() -> Result<()> {
     println!("{}", "Configuration Wizard".cyan().bold());
     println!("{}", "=".repeat(80).cyan());
@@ -35,7 +23,6 @@ pub fn handle_config_wizard() -> Result<()> {
     let current_config = FilterConfig::load().context("Failed to load current configuration")?;
     let mut modified_config = current_config.clone();
 
-    // 1. Exclude older than
     println!("{}", "1. Age Filter".bold().cyan());
     println!("   Current: {}", current_age(&modified_config).yellow());
 
@@ -68,7 +55,6 @@ pub fn handle_config_wizard() -> Result<()> {
         println!("  {} Age filter disabled\n", "✓".green());
     }
 
-    // 2. Include patterns
     println!("{}", "2. Include Patterns".bold().cyan());
     println!(
         "   Current: {}",
@@ -102,7 +88,6 @@ pub fn handle_config_wizard() -> Result<()> {
         println!("  {} All projects will be included\n", "✓".green());
     }
 
-    // 3. Exclude patterns
     println!("{}", "3. Exclude Patterns".bold().cyan());
     println!(
         "   Current: {}",
@@ -132,7 +117,6 @@ pub fn handle_config_wizard() -> Result<()> {
         println!("  {} No exclusion patterns\n", "✓".green());
     }
 
-    // 4. Exclude attachments
     println!("{}", "4. File Type Filter".bold().cyan());
     println!(
         "   Current: {}",
@@ -159,7 +143,6 @@ pub fn handle_config_wizard() -> Result<()> {
         }
     );
 
-    // 5. Max file size
     println!("{}", "5. File Size Limit".bold().cyan());
     println!(
         "   Current: {} MB",
@@ -185,7 +168,6 @@ pub fn handle_config_wizard() -> Result<()> {
         println!("  {} Keeping current max file size\n", "✓".green());
     }
 
-    // Artifact sync categories
     let change_artifacts =
         Confirm::new("Configure artifact sync categories (settings, skills, agents, ...)?")
             .with_default(false)
@@ -195,7 +177,6 @@ pub fn handle_config_wizard() -> Result<()> {
             prompt_artifact_toggle_selection(&modified_config.sync_artifacts)?;
     }
 
-    // Summary and confirmation
     println!("{}", "=".repeat(80).cyan());
     println!("{}", "Configuration Summary:".bold().cyan());
     println!("{}", "=".repeat(80).cyan());

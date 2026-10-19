@@ -1,10 +1,3 @@
-//! Interactive configuration menu: pick the settings to change, then edit only
-//! those.
-//!
-//! Note the empty-input handling: here, submitting an empty value *clears* the
-//! setting and says so. The wizard deliberately behaves differently — see
-//! `wizard.rs`.
-
 use anyhow::{Context, Result};
 use colored::Colorize;
 use inquire::{Confirm, MultiSelect, Text};
@@ -13,9 +6,6 @@ use super::fields::{format_patterns, format_size_mb, parse_file_size_mb, parse_p
 use super::prompts::{current_age, display_config_summary, prompt_artifact_toggle_selection};
 use crate::filter::FilterConfig;
 
-/// Handle interactive configuration menu
-///
-/// Shows all configuration options and allows user to select which ones to modify
 pub fn handle_config_interactive() -> Result<()> {
     println!("{}", "Interactive Configuration".cyan().bold());
     println!("{}", "=".repeat(80).cyan());

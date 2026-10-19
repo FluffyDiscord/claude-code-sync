@@ -1,5 +1,3 @@
-//! Discovery reads a transcript again only when its length or mtime changed.
-
 mod common;
 
 use std::fs;

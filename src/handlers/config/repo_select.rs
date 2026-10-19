@@ -1,5 +1,3 @@
-//! The repository selector shown by `claude-code-sync config` with no argument.
-
 use anyhow::{Context, Result};
 use colored::Colorize;
 use inquire::Select;
@@ -10,10 +8,6 @@ use crate::config::ConfigManager;
 use crate::git::{self, GitRepo};
 use crate::sync::{MultiRepoState, RepoConfig};
 
-/// Try to recover an existing repo if state.json is missing but repo exists
-///
-/// This handles the case where a user has a valid repo in the default location
-/// but the state.json file is missing (e.g., from an older version or deletion).
 fn try_recover_existing_repo() -> Result<Option<MultiRepoState>> {
     let default_repo = match ConfigManager::default_repo_dir() {
         Ok(path) => path,
@@ -52,7 +46,7 @@ fn try_recover_existing_repo() -> Result<Option<MultiRepoState>> {
         name: "default".to_string(),
         sync_repo_path: default_repo,
         has_remote,
-        is_cloned_repo: false, // We can't know this for sure
+        is_cloned_repo: false,
         remote_url,
         description: Some("Recovered from existing repository".to_string()),
     };
@@ -71,17 +65,11 @@ fn try_recover_existing_repo() -> Result<Option<MultiRepoState>> {
     Ok(Some(state))
 }
 
-/// Handle the repository selector menu
-///
-/// Shows when `claude-code-sync config` is run with no arguments.
-/// Displays all configured repositories and allows switching between them.
 pub fn handle_repo_selector() -> Result<()> {
     println!("{}", "Repository Configuration".cyan().bold());
     println!("{}", "=".repeat(60).cyan());
     println!();
 
-    // "Not initialized" is recoverable if a repo happens to sit in the default
-    // location; any other load failure is not ours to interpret.
     let mut state = match MultiRepoState::load() {
         Ok(s) => s,
         Err(e) => {
@@ -121,7 +109,6 @@ pub fn handle_repo_selector() -> Result<()> {
         return Ok(());
     }
 
-    // Active repo first, then alphabetical.
     let mut repo_entries: Vec<_> = state.repos.values().collect();
     repo_entries.sort_by(|a, b| {
         if a.name == state.active_repo {
@@ -173,7 +160,6 @@ pub fn handle_repo_selector() -> Result<()> {
         return handle_config_interactive();
     }
 
-    // The repo name is the first token, before any [ACTIVE] marker.
     let repo_name = selection
         .split_whitespace()
         .next()

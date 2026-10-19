@@ -7,82 +7,31 @@ use std::path::{Path, PathBuf};
 
 use crate::config::ConfigManager;
 
-/// Configuration file for non-interactive initialization.
-///
-/// This struct can be loaded from a TOML file to initialize claude-code-sync
-/// without requiring interactive prompts. Useful for automation, CI/CD, and
-/// headless environments.
-///
-/// # Example TOML file
-///
-/// ```toml
-/// # Required: Path to the local git repository
-/// repo_path = "~/claude-history-sync"
-///
-/// # Optional: Remote git URL for syncing
-/// remote_url = "https://github.com/user/claude-history.git"
-///
-/// # Optional: Clone from remote (default: false)
-/// # Set to true if the repo doesn't exist locally and should be cloned
-/// clone = true
-///
-/// # Optional: Exclude file attachments (default: false)
-/// exclude_attachments = true
-///
-/// # Optional: Exclude conversations older than N days
-/// exclude_older_than_days = 30
-///
-/// # Optional: Enable Git LFS for large files (default: false)
-/// enable_lfs = true
-///
-/// # Optional: Subdirectory for storing projects (default: "projects")
-/// sync_subdirectory = "claude-history"
-///
-/// # Optional: Use only project name for multi-device sync (default: false)
-/// use_project_name_only = true
-///
-/// # Optional: Artifact categories to sync (all default to false)
-/// [sync_artifacts]
-/// settings = true
-/// skills = true
-/// prompt_history = true
-/// ```
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct InitConfig {
-    /// Path to the local git repository for storing conversation history.
     pub repo_path: String,
 
-    /// Optional remote git repository URL.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub remote_url: Option<String>,
 
-    /// Whether to clone from the remote URL (default: false).
     #[serde(default)]
     pub clone: bool,
 
-    /// Whether to exclude file attachments (default: false).
     #[serde(default)]
     pub exclude_attachments: bool,
 
-    /// Exclude conversations older than N days.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub exclude_older_than_days: Option<u32>,
 
-    /// Enable Git LFS for large files (default: false).
     #[serde(default)]
     pub enable_lfs: bool,
 
-    /// Subdirectory within sync repo for storing projects (default: "projects").
     #[serde(default = "default_sync_subdirectory")]
     pub sync_subdirectory: String,
 
-    /// Use only project name instead of full path (default: false).
-    /// Enables multi-device sync compatibility.
     #[serde(default)]
     pub use_project_name_only: bool,
 
-    /// Per-category artifact sync switches (`[sync_artifacts]` table).
-    /// Missing table means every category stays off.
     #[serde(default)]
     pub sync_artifacts: crate::artifacts::registry::ArtifactToggles,
 }
@@ -92,7 +41,6 @@ fn default_sync_subdirectory() -> String {
 }
 
 impl InitConfig {
-    /// Load configuration from a TOML file.
     pub fn load<P: AsRef<Path>>(path: P) -> Result<Self> {
         let content = fs::read_to_string(path.as_ref())
             .with_context(|| format!("Failed to read config file: {}", path.as_ref().display()))?;
@@ -100,20 +48,12 @@ impl InitConfig {
         let config: InitConfig =
             toml::from_str(&content).context("Failed to parse init config file")?;
 
-        // Validate the config
         config.validate()?;
 
         Ok(config)
     }
 
-    /// Load configuration from the default location.
-    ///
-    /// Checks the following locations in order:
-    /// 1. `CLAUDE_CODE_SYNC_INIT_CONFIG` environment variable
-    /// 2. `~/.claude-code-sync-init.toml`
-    /// 3. Config directory: `init.toml`
     pub fn load_default() -> Result<Option<Self>> {
-        // Check environment variable first
         if let Ok(path) = std::env::var("CLAUDE_CODE_SYNC_INIT_CONFIG") {
             let path = PathBuf::from(&path);
             if path.exists() {
@@ -125,7 +65,6 @@ impl InitConfig {
             }
         }
 
-        // Check ~/.claude-code-sync-init.toml
         if let Some(home) = dirs::home_dir() {
             let home_config = home.join(".claude-code-sync-init.toml");
             if home_config.exists() {
@@ -134,7 +73,6 @@ impl InitConfig {
             }
         }
 
-        // Check config directory
         if let Ok(config_dir) = ConfigManager::config_dir() {
             let config_path = config_dir.join("init.toml");
             if config_path.exists() {
@@ -146,9 +84,7 @@ impl InitConfig {
         Ok(None)
     }
 
-    /// Validate the configuration.
     fn validate(&self) -> Result<()> {
-        // Validate remote URL if provided
         if let Some(ref url) = self.remote_url {
             if !is_valid_git_url(url) {
                 return Err(anyhow::anyhow!(
@@ -158,7 +94,6 @@ impl InitConfig {
             }
         }
 
-        // If clone is true, remote_url must be provided
         if self.clone && self.remote_url.is_none() {
             return Err(anyhow::anyhow!(
                 "clone = true requires remote_url to be set"
@@ -168,7 +103,6 @@ impl InitConfig {
         Ok(())
     }
 
-    /// Convert to OnboardingConfig for use with existing initialization flow.
     pub fn to_onboarding_config(&self) -> Result<OnboardingConfig> {
         let repo_path = expand_tilde(&self.repo_path)?;
 
@@ -183,7 +117,6 @@ impl InitConfig {
     }
 }
 
-/// Repository type for onboarding
 #[derive(Debug, Clone)]
 enum RepoType {
     Remote,
@@ -199,7 +132,6 @@ impl std::fmt::Display for RepoType {
     }
 }
 
-/// Clone location option
 #[derive(Debug, Clone)]
 enum CloneLocation {
     Default,
@@ -220,63 +152,21 @@ impl std::fmt::Display for CloneLocation {
     }
 }
 
-/// Onboarding configuration result
-///
-/// Contains all configuration settings gathered during the interactive onboarding process.
-/// This configuration determines how claude-code-sync will manage and sync Claude Code conversations.
 #[derive(Debug)]
 pub struct OnboardingConfig {
-    /// Path to the local git repository for storing conversation history.
-    ///
-    /// This can be either:
-    /// - A directory where a remote repository will be cloned
-    /// - A path to an existing local git repository
-    /// - A path where a new git repository will be initialized
     pub repo_path: PathBuf,
 
-    /// Optional remote git repository URL for syncing conversations.
-    ///
-    /// If present, this URL will be used to:
-    /// - Clone the repository (when `is_cloned` is true)
-    /// - Configure the remote origin for pushing/pulling changes
-    ///
-    /// Supported URL formats:
-    /// - HTTPS: `https://github.com/user/repo.git`
-    /// - SSH: `git@github.com:user/repo.git`
-    /// - SSH protocol: `ssh://git@github.com/user/repo.git`
-    ///
-    /// None indicates a local-only repository with no remote configured.
     pub remote_url: Option<String>,
 
-    /// Indicates whether the repository should be cloned from the remote URL.
-    ///
-    /// - `true`: The repository will be cloned from `remote_url` to `repo_path`
-    /// - `false`: Use an existing local repository at `repo_path`, or initialize a new one
     pub is_cloned: bool,
 
-    /// Whether to exclude file attachments when syncing conversations.
-    ///
-    /// - `true`: Only sync `.jsonl` conversation files, excluding images, PDFs, and other attachments
-    /// - `false`: Sync all conversation data including attachments
-    ///
-    /// Excluding attachments reduces storage size and sync time while preserving conversation text.
     pub exclude_attachments: bool,
 
-    /// Optional threshold (in days) for excluding old conversations from sync.
-    ///
-    /// If set, only conversations modified within the last N days will be synced.
-    /// Conversations older than this threshold will be excluded.
-    ///
-    /// - `Some(30)`: Only sync conversations modified in the last 30 days
-    /// - `None`: Sync all conversations regardless of age
     pub exclude_older_than_days: Option<u32>,
 
-    /// Which artifact categories (settings, skills, agents, ...) to sync
-    /// alongside conversation history.
     pub sync_artifacts: crate::artifacts::registry::ArtifactToggles,
 }
 
-/// Run the interactive onboarding flow
 pub fn run_onboarding() -> Result<OnboardingConfig> {
     println!(
         "\n{}",
@@ -286,28 +176,24 @@ pub fn run_onboarding() -> Result<OnboardingConfig> {
     );
     println!();
 
-    // Step 1: Ask for repository type
     let repo_type = Select::new("Repository type:", vec![RepoType::Remote, RepoType::Local])
         .prompt()
         .context("Failed to get repository type")?;
 
     let (repo_path, remote_url, is_cloned) = match repo_type {
         RepoType::Remote => {
-            // Get remote URL
             let url = Text::new("Enter remote repository URL:")
                 .with_placeholder("git@github.com:user/claude-history.git or https://github.com/user/claude-history.git")
                 .with_help_message("The git repository URL for syncing your Claude Code conversations")
                 .prompt()
                 .context("Failed to get remote URL")?;
 
-            // Validate URL format
             if !is_valid_git_url(&url) {
                 return Err(anyhow::anyhow!(
                     "Invalid git URL. Must start with 'https://', 'http://', or 'git@'"
                 ));
             }
 
-            // Ask for clone location
             let clone_loc = Select::new(
                 "Clone location:",
                 vec![CloneLocation::Default, CloneLocation::Custom],
@@ -325,7 +211,6 @@ pub fn run_onboarding() -> Result<OnboardingConfig> {
                         .prompt()
                         .context("Failed to get custom path")?;
 
-                    // Expand tilde if present
                     expand_tilde(&custom_path)?
                 }
             };
@@ -343,7 +228,6 @@ pub fn run_onboarding() -> Result<OnboardingConfig> {
 
             let path = expand_tilde(&path_str)?;
 
-            // Ask if they want to add a remote later
             let add_remote =
                 Confirm::new("Do you want to add a remote repository for backup/sync?")
                     .with_default(false)
@@ -373,7 +257,6 @@ pub fn run_onboarding() -> Result<OnboardingConfig> {
 
     println!();
 
-    // Step 2: Filter preferences
     let exclude_attachments = Confirm::new("Exclude file attachments (images, PDFs, etc.)?")
         .with_default(true)
         .with_help_message("Only sync .jsonl conversation files, excluding any attached files")
@@ -398,7 +281,6 @@ pub fn run_onboarding() -> Result<OnboardingConfig> {
         None
     };
 
-    // Step 3: Artifact sync (settings, skills, agents, ...)
     let sync_artifacts = prompt_artifact_categories()?;
 
     println!();
@@ -414,16 +296,12 @@ pub fn run_onboarding() -> Result<OnboardingConfig> {
     })
 }
 
-/// Ask which artifact categories to sync. All categories are pre-checked for
-/// new setups; help text flags the two with caveats (plans may contain
-/// sensitive prose, todos churn on every session).
 fn prompt_artifact_categories() -> Result<crate::artifacts::registry::ArtifactToggles> {
     use crate::artifacts::registry::{toggleable, ArtifactToggles};
 
     let options: Vec<String> = toggleable()
         .map(|d| format!("{} — {}", d.name, d.description))
         .collect();
-    // Hooks run code from the sync repository: offered, never preselected.
     let defaults = ArtifactToggles::all_but_hooks();
     let default_indices: Vec<usize> = toggleable()
         .enumerate()
@@ -453,7 +331,6 @@ fn prompt_artifact_categories() -> Result<crate::artifacts::registry::ArtifactTo
     Ok(toggles)
 }
 
-/// Validate git URL format
 fn is_valid_git_url(url: &str) -> bool {
     url.starts_with("https://")
         || url.starts_with("http://")
@@ -461,7 +338,6 @@ fn is_valid_git_url(url: &str) -> bool {
         || url.starts_with("ssh://")
 }
 
-/// Expand tilde in path
 fn expand_tilde(path: &str) -> Result<PathBuf> {
     if path.starts_with("~/") || path == "~" {
         let home = dirs::home_dir().context("Failed to get home directory")?;
@@ -493,15 +369,12 @@ mod tests {
     fn test_expand_tilde() {
         let home = dirs::home_dir().unwrap();
 
-        // Test tilde expansion
         let expanded = expand_tilde("~/test").unwrap();
         assert_eq!(expanded, home.join("test"));
 
-        // Test just tilde
         let expanded = expand_tilde("~").unwrap();
         assert_eq!(expanded, home);
 
-        // Test non-tilde path
         let expanded = expand_tilde("/absolute/path").unwrap();
         assert_eq!(expanded, PathBuf::from("/absolute/path"));
     }
