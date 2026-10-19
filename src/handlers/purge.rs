@@ -9,6 +9,8 @@ use crate::sync::{discovery::claude_projects_dir, SyncState};
 pub fn handle_purge(older_than_days: Option<u32>, dry_run: bool, assume_yes: bool) -> Result<()> {
     let state = SyncState::load()?;
     let filter = FilterConfig::load()?;
+    let repo = purge::open_sync_repo(&state.sync_repo_path)?;
+    crate::sync::limit_checkout(&repo, &filter)?;
     let claude_dir = crate::sync::discovery::claude_home_dir()?;
     let configured = older_than_days.or(filter.purge_older_than_days);
     let days = purge::retention_days(&claude_dir, configured);
@@ -29,7 +31,6 @@ pub fn handle_purge(older_than_days: Option<u32>, dry_run: bool, assume_yes: boo
         return Ok(());
     }
 
-    let repo = purge::open_sync_repo(&state.sync_repo_path)?;
     purge::ensure_nothing_uncommitted(&repo)?;
 
     let report = purge::apply(&plan)?;

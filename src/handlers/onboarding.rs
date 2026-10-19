@@ -47,6 +47,7 @@ pub fn run_onboarding_flow() -> Result<()> {
         .context("Failed to save filter configuration")?;
 
     println!("{}", "✓ Ready to sync!".green().bold());
+    sync::print_map_project_hint();
     println!();
 
     Ok(())
@@ -106,6 +107,7 @@ pub fn run_init_from_config<P: AsRef<Path>>(config_path: Option<P>) -> Result<()
     if init_config.enable_lfs {
         println!("  {} enabled", "LFS:".cyan());
     }
+    sync::print_map_project_hint();
     println!();
 
     Ok(())

@@ -3,7 +3,6 @@ mod common;
 use std::fs;
 use std::path::Path;
 
-use claude_code_sync::filter::FilterConfig;
 use claude_code_sync::parser::ConversationSession;
 use claude_code_sync::sync::discovery::discover_sessions;
 use common::ConfigEnv;
@@ -16,7 +15,7 @@ const SECOND_LINE: &str =
     r#"{"type":"assistant","uuid":"b","timestamp":"2025-01-01T00:01:00Z","message":{"text":"hi"}}"#;
 
 fn summarize_only_transcript(projects_dir: &Path) -> ConversationSession {
-    let mut sessions = discover_sessions(projects_dir, &FilterConfig::default()).unwrap();
+    let mut sessions = discover_sessions(projects_dir, &common::every_project_filter()).unwrap();
     assert_eq!(sessions.len(), 1);
     sessions.remove(0)
 }

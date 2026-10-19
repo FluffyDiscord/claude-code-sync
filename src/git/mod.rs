@@ -84,7 +84,13 @@ impl GitRepo {
         }
 
         let output = Command::new("git")
-            .args(["clone", url, &path.to_string_lossy()])
+            .args([
+                "clone",
+                "--filter=blob:none",
+                "--sparse",
+                url,
+                &path.to_string_lossy(),
+            ])
             .output()
             .context("Failed to run 'git clone'")?;
 
@@ -290,7 +296,63 @@ impl GitRepo {
                  Run `claude-code-sync pull` to settle or undo it first."
             ));
         }
+        let is_sparse = self.is_sparse();
+        if is_sparse {
+            return self.run_git_ok(&["-c", "core.safecrlf=false", "add", "-A", "--sparse"]);
+        }
         self.run_git_ok(&["-c", "core.safecrlf=false", "add", "-A"])
+    }
+
+    fn is_sparse(&self) -> bool {
+        let sparse_setting = self
+            .run_git(&["config", "--get", "core.sparseCheckout"])
+            .unwrap_or_default();
+        sparse_setting == "true"
+    }
+
+    pub fn limit_checkout(&self, directories: Option<&[String]>) -> Result<()> {
+        let is_sparse = self.is_sparse();
+
+        let Some(directories) = directories else {
+            if is_sparse {
+                self.run_git_ok(&["sparse-checkout", "disable"])?;
+            }
+            return Ok(());
+        };
+
+        self.fetch_contents_on_demand()?;
+
+        if is_sparse {
+            let listed = self.run_git(&["sparse-checkout", "list"])?;
+            let mut current: Vec<&str> = listed.lines().collect();
+            current.sort_unstable();
+            let mut wanted: Vec<&str> = directories.iter().map(String::as_str).collect();
+            wanted.sort_unstable();
+            wanted.dedup();
+            if current == wanted {
+                return Ok(());
+            }
+        }
+
+        let mut arguments = vec!["sparse-checkout", "set", "--cone", "--skip-checks", "--"];
+        arguments.extend(directories.iter().map(String::as_str));
+        self.run_git_ok(&arguments)
+    }
+
+    fn fetch_contents_on_demand(&self) -> Result<()> {
+        let has_origin = self.has_remote("origin");
+        if !has_origin {
+            return Ok(());
+        }
+        let filter = self
+            .run_git(&["config", "--get", "remote.origin.partialclonefilter"])
+            .unwrap_or_default();
+        let is_partial_clone = filter == "blob:none";
+        if is_partial_clone {
+            return Ok(());
+        }
+        self.run_git_ok(&["config", "remote.origin.promisor", "true"])?;
+        self.run_git_ok(&["config", "remote.origin.partialclonefilter", "blob:none"])
     }
 
     pub fn stage_renormalized(&self) -> Result<()> {
@@ -391,7 +453,14 @@ impl GitRepo {
                 .with_context(|| format!("Failed to check out '{remote}/{branch}'"));
         }
 
-        let merge = self.git_output(&["merge", "--no-edit", "FETCH_HEAD"])?;
+        let merge = self.git_output(&[
+            "merge",
+            "--no-stat",
+            "--no-edit",
+            "-X",
+            "no-renames",
+            "FETCH_HEAD",
+        ])?;
         if merge.status.success() {
             return Ok(());
         }

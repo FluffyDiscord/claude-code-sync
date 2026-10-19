@@ -21,7 +21,7 @@ cargo doc --open --no-deps --all-features
 |---------|-------------|
 | **Smart Merge** | Automatically combines non-conflicting conversation changes |
 | **Artifact Sync** | Carry settings, skills, agents, commands, rules, hooks, plugin manifests, plans, todos, and prompt history across machines |
-| **Project Map** | Pin a project to its path per machine, so renamed or relocated checkouts stay one project |
+| **Project Map** | Sync only the projects you map on each machine; others never download. Renamed or relocated checkouts stay one project |
 | **Neutral Paths** | Synced config files store `__HOME__` / `__CLAUDE_DIR__` instead of this machine's absolute paths |
 | **Deletion Mirroring** | Deleting a skill, agent, command, rule or hook propagates, guarded so a fresh machine can never wipe the repo |
 | **External Merge Tool** | Resolve a differing file in a real three-way merge window instead of picking a side |
@@ -31,7 +31,7 @@ cargo doc --open --no-deps --all-features
 | **Interactive Onboarding** | First-time setup wizard guides you through configuration |
 | **Non-Interactive Init** | Config file support for CI/CD and automation |
 | **Smart Conflict Resolution** | Interactive TUI for resolving conflicts with preview |
-| **Selective Sync** | Filter by project, date, or exclude attachments; or sync only the projects mapped on this machine |
+| **Selective Sync** | Filter by project, date, or exclude attachments |
 | **Git LFS Support** | Efficiently store large conversation files with Git LFS |
 | **Undo Operations** | Rollback pull/push with automatic snapshots |
 | **Operation History** | Track and review past sync operations |
@@ -189,11 +189,17 @@ claude-code-sync config --unmap-project app
 ```
 
 The repo then stores that project under `projects/app/`, and each machine
-materializes it back into its own directory. Unmapped projects are untouched:
-they keep `use_project_name_only` or their encoded path, exactly as before. Ids
-are plain directory names, paths must be absolute and spelled exactly as the
-project's own path (a trailing slash encodes differently), and two ids pointing
-at one directory are refused.
+materializes it back into its own directory. Ids are plain directory names,
+paths must be absolute and spelled exactly as the project's own path (a trailing
+slash encodes differently), and two ids pointing at one directory are refused.
+
+**Only mapped projects sync.** Mapping a project syncs it right away. This
+machine's copy of the sync repo holds and downloads only its mapped projects,
+plus shared settings and artifacts. Other machines' projects never land here,
+so `purge` here prunes only the mapped projects in the repo.
+
+> A sync repo cloned by an older version keeps what it already downloaded.
+> Re-clone it to free the space.
 
 **An id that's already taken is refused.** Two checkouts named `app` → map the
 second one under its own id:
@@ -205,24 +211,22 @@ claude-code-sync config --map-project personal-app=/home/user/personal/app
 To move an id to another path, unmap and map it in one command:
 `--unmap-project app --map-project app=/new/path`.
 
-A machine that has not mapped an id yet skips those files rather than writing
-them to a directory Claude Code would never read; run `--map-project` there and
-pull again. All of a pull's misses are reported in one warning that names every
-unmapped project and how many files it holds. To get a line per file instead:
+**To sync every project instead:**
+
+```bash
+claude-code-sync config --mapped-projects-only false
+```
+
+Unmapped projects then keep `use_project_name_only` or their encoded path, and
+the whole repo is downloaded. A machine that has not mapped an id yet skips
+those files rather than writing them to a directory Claude Code would never
+read; run `--map-project` there. All of a pull's misses are reported in one
+warning that names every unmapped project and how many files it holds. To get a
+line per file instead:
 
 ```bash
 claude-code-sync config --warn-each-skipped-file true
 ```
-
-**Sync only the projects you map here.** Every other project, on this machine
-or in the repo, is left alone both ways. No warnings, nothing deleted:
-
-```bash
-claude-code-sync config --mapped-projects-only true
-```
-
-> Limits project files only (transcripts, attachments, project memory).
-> Settings, skills and other artifacts still sync. `purge` still covers every project.
 
 ### Machine-neutral paths in config files
 
@@ -964,7 +968,7 @@ purge_after_sync = false
 warn_each_skipped_file = false
 
 # Sync only the projects in [project_map]; leave every other one alone
-mapped_projects_only = false
+mapped_projects_only = true
 
 # External three-way merge command offered when a file differs or conflicts
 merge_tool = "phpstorm merge"

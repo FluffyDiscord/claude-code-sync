@@ -74,6 +74,7 @@ pub fn pull_history(
     let state = SyncState::load()?;
     let repo = GitRepo::open(&state.sync_repo_path)?;
     let filter = FilterConfig::load()?;
+    super::limit_checkout(&repo, &filter)?;
     let claude_dir = claude_projects_dir()?;
 
     let branch_name = branch

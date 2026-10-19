@@ -152,6 +152,7 @@ pub fn push_history(
         );
     }
     let mut filter = FilterConfig::load()?;
+    super::limit_checkout(&repo, &filter)?;
 
     if exclude_attachments {
         filter.exclude_attachments = true;

@@ -1,3 +1,5 @@
+mod common;
+
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -12,7 +14,7 @@ use tempfile::TempDir;
 fn all_on_filter() -> FilterConfig {
     FilterConfig {
         sync_artifacts: ArtifactToggles::all_enabled(),
-        ..Default::default()
+        ..common::every_project_filter()
     }
 }
 

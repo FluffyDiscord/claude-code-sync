@@ -4,7 +4,6 @@ use std::fs;
 use std::io::Write;
 use std::path::Path;
 
-use claude_code_sync::filter::FilterConfig;
 use claude_code_sync::sync::discovery::discover_sessions;
 use claude_code_sync::sync::push::{needs_copy, plan_push};
 use common::ConfigEnv;
@@ -56,7 +55,7 @@ fn test_second_push_plan_is_all_unchanged_despite_shared_session_id() {
     let claude = TempDir::new().unwrap();
     let repo_projects = TempDir::new().unwrap();
     seed_claude_projects(claude.path());
-    let filter = FilterConfig::default();
+    let filter = common::every_project_filter();
 
     let sessions = discover_sessions(claude.path(), &filter).unwrap();
     assert_eq!(sessions.len(), 3, "parent + two subagents discovered");
@@ -88,7 +87,7 @@ fn an_unchanged_session_is_left_in_the_repository_as_it_is() {
     let claude = TempDir::new().unwrap();
     let repo_projects = TempDir::new().unwrap();
     seed_claude_projects(claude.path());
-    let filter = FilterConfig::default();
+    let filter = common::every_project_filter();
 
     let sessions = discover_sessions(claude.path(), &filter).unwrap();
     let plan = plan_push(&sessions, claude.path(), repo_projects.path(), &filter).unwrap();
@@ -146,7 +145,7 @@ fn workflow_journals_sharing_a_filename_are_unchanged_on_second_push() {
         )
         .unwrap();
     }
-    let filter = FilterConfig::default();
+    let filter = common::every_project_filter();
 
     let sessions = discover_sessions(claude.path(), &filter).unwrap();
     let plan1 = plan_push(&sessions, claude.path(), repo_projects.path(), &filter).unwrap();
@@ -172,7 +171,7 @@ fn test_push_plan_detects_real_modification() {
     let claude = TempDir::new().unwrap();
     let repo_projects = TempDir::new().unwrap();
     seed_claude_projects(claude.path());
-    let filter = FilterConfig::default();
+    let filter = common::every_project_filter();
 
     let sessions = discover_sessions(claude.path(), &filter).unwrap();
     let plan1 = plan_push(&sessions, claude.path(), repo_projects.path(), &filter).unwrap();
@@ -220,13 +219,13 @@ fn mapped_projects_only_discovers_just_the_mapped_projects() {
             project,
         );
     }
-    let mut filter = FilterConfig::default();
+    let mut filter = common::every_project_filter();
     filter
         .project_map
         .insert("myproj".to_string(), "/home/user/myproj".into());
 
     let everything = discover_sessions(projects.path(), &filter).unwrap();
-    assert_eq!(everything.len(), 4, "off by default: every project syncs");
+    assert_eq!(everything.len(), 4, "switched off: every project syncs");
 
     filter.mapped_projects_only = true;
     let mut discovered: Vec<String> = discover_sessions(projects.path(), &filter)

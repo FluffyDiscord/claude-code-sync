@@ -114,6 +114,26 @@ pub fn is_synced_path(filter: &FilterConfig, relative: &Path) -> bool {
     }
 }
 
+pub fn checkout_directories(filter: &FilterConfig) -> Vec<String> {
+    let mut directories = vec![crate::artifacts::registry::ARTIFACTS_SUBDIR.to_string()];
+    for (id, path) in &filter.project_map {
+        for project_dir in [id.clone(), encode_project_path(path)] {
+            let repo_path = Path::new(&filter.sync_subdirectory).join(project_dir);
+            directories.push(slash_separated(&repo_path));
+        }
+    }
+    directories
+}
+
+fn slash_separated(path: &Path) -> String {
+    let parts: Vec<String> = path
+        .components()
+        .filter(|part| *part != std::path::Component::CurDir)
+        .map(|part| part.as_os_str().to_string_lossy().into_owned())
+        .collect();
+    parts.join("/")
+}
+
 pub fn repo_dir_name(filter: &FilterConfig, encoded_dir: &str) -> String {
     if let Some(id) = canonical_id(&filter.project_map, encoded_dir) {
         return id;
@@ -392,14 +412,24 @@ mod tests {
     }
 
     #[test]
+    fn the_checkout_holds_artifacts_and_each_mapped_project_by_id_and_encoded_path() {
+        let mut filter = mapped(&[("shop", "/home/user/work/shop")]);
+        filter.sync_subdirectory = "history/projects".to_string();
+
+        assert_eq!(
+            checkout_directories(&filter),
+            [
+                "artifacts",
+                "history/projects/shop",
+                "history/projects/-home-user-work-shop"
+            ]
+        );
+    }
+
+    #[test]
     fn mapped_projects_only_syncs_a_mapped_project_by_id_or_encoded_path() {
         let mut filter = mapped(&[("shop", "/home/user/work/shop")]);
-        assert!(
-            is_synced(&filter, "-home-user-work-other"),
-            "off by default"
-        );
-
-        filter.mapped_projects_only = true;
+        assert!(filter.mapped_projects_only, "on by default");
 
         assert!(is_synced(&filter, "shop"));
         assert!(is_synced(&filter, "-home-user-work-shop"));
@@ -409,6 +439,10 @@ mod tests {
             !is_synced_path(&filter, Path::new("stray.jsonl")),
             "a file beside the projects belongs to none"
         );
+
+        filter.mapped_projects_only = false;
+
+        assert!(is_synced(&filter, "-home-user-work-other"));
     }
 
     #[test]

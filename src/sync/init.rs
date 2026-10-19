@@ -53,6 +53,13 @@ pub fn init_from_onboarding(
     Ok(())
 }
 
+pub fn print_map_project_hint() {
+    println!(
+        "{} map each project to sync on this machine: claude-code-sync config --map-project <path>",
+        "Next:".cyan().bold()
+    );
+}
+
 pub fn init_sync_repo(repo_path: &Path, remote_url: Option<&str>) -> Result<()> {
     crate::config::ConfigManager::ensure_config_dir()?;
 
@@ -119,7 +126,7 @@ pub fn init_sync_repo(repo_path: &Path, remote_url: Option<&str>) -> Result<()> 
         "{}",
         "Sync repository initialized successfully!".green().bold()
     );
-    println!("\n{} claude-code-sync push", "Next steps:".cyan().bold());
+    print_map_project_hint();
 
     Ok(())
 }

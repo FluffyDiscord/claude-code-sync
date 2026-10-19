@@ -214,7 +214,7 @@ enum Commands {
         unmap_project: Vec<String>,
 
         /// Sync only the projects mapped with --map-project; leave every
-        /// other project, here and in the repo, alone
+        /// other project, here and in the repo, alone (default: true)
         #[arg(long, value_name = "BOOL")]
         mapped_projects_only: Option<bool>,
 
@@ -478,6 +478,7 @@ fn main() -> Result<()> {
                 }
 
                 println!("{}", "Clone and initialization complete!".green().bold());
+                sync::print_map_project_hint();
             } else if let Some(local_path) = local {
                 sync::init_sync_repo(&local_path, remote.as_deref())?;
             } else if let Some(remote_url) = remote {
@@ -502,6 +503,7 @@ fn main() -> Result<()> {
                 }
 
                 println!("{}", "Clone and initialization complete!".green().bold());
+                sync::print_map_project_hint();
             } else {
                 if !try_init_from_config()? {
                     run_onboarding_flow()?;
@@ -681,6 +683,10 @@ fn main() -> Result<()> {
                         disable_artifacts,
                     )?;
                 }
+                let project_was_mapped = !map_project.is_empty();
+                if project_was_mapped {
+                    sync_newly_mapped_projects()?;
+                }
             }
         }
         Commands::Report { format, output } => {
@@ -761,5 +767,22 @@ fn main() -> Result<()> {
         }
     }
 
+    Ok(())
+}
+
+fn sync_newly_mapped_projects() -> Result<()> {
+    let repository_is_ready = is_initialized()?;
+    if !repository_is_ready {
+        return Ok(());
+    }
+    println!();
+    let synced = sync::sync_bidirectional(None, None, false, false, VerbosityLevel::Normal);
+    let Err(error) = synced else {
+        return Ok(());
+    };
+    eprintln!(
+        "{}",
+        format!("Mapped. Sync failed: {error:#}\nRun: claude-code-sync sync").yellow()
+    );
     Ok(())
 }

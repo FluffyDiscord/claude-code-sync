@@ -7,7 +7,7 @@ mod state;
 mod status;
 mod summary_cache;
 
-pub use init::{init_from_onboarding, init_sync_repo};
+pub use init::{init_from_onboarding, init_sync_repo, print_map_project_hint};
 pub use pull::pull_history;
 pub use push::push_history;
 pub use remote::{remove_remote, set_remote, show_remote};
@@ -20,6 +20,24 @@ use colored::Colorize;
 use crate::artifacts::engine::{descriptor, ArtifactChangeKind, ArtifactReport, CategoryCounts};
 
 const MAX_CONVERSATIONS_TO_DISPLAY: usize = 10;
+
+pub(crate) fn limit_checkout(
+    repo: &crate::git::GitRepo,
+    filter: &crate::filter::FilterConfig,
+) -> Result<()> {
+    let directories = filter
+        .mapped_projects_only
+        .then(|| crate::project_map::checkout_directories(filter));
+    let limited = repo.limit_checkout(directories.as_deref());
+    let Err(error) = limited else {
+        return Ok(());
+    };
+    if !filter.mapped_projects_only {
+        return Err(error.context("Failed to check out every project in the sync repository"));
+    }
+    log::warn!("Kept the sync repository's current checkout: {error:#}");
+    Ok(())
+}
 
 pub(crate) fn print_artifact_changes(report: &ArtifactReport) {
     let has_no_changes = report.changes.is_empty();

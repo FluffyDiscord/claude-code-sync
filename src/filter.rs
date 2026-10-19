@@ -39,7 +39,7 @@ pub struct FilterConfig {
     #[serde(default)]
     pub project_map: crate::project_map::ProjectMap,
 
-    #[serde(default)]
+    #[serde(default = "default_mapped_projects_only")]
     pub mapped_projects_only: bool,
 
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -70,6 +70,10 @@ fn default_sync_subdirectory() -> String {
     "projects".to_string()
 }
 
+fn default_mapped_projects_only() -> bool {
+    true
+}
+
 impl Default for FilterConfig {
     fn default() -> Self {
         FilterConfig {
@@ -84,7 +88,7 @@ impl Default for FilterConfig {
             use_project_name_only: false,
             sync_artifacts: Default::default(),
             project_map: Default::default(),
-            mapped_projects_only: false,
+            mapped_projects_only: default_mapped_projects_only(),
             purge_older_than_days: None,
             purge_after_sync: false,
             warn_each_skipped_file: false,

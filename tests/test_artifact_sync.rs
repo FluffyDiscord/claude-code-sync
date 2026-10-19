@@ -1,3 +1,5 @@
+mod common;
+
 use std::fs;
 use std::path::Path;
 
@@ -579,7 +581,7 @@ fn test_attachments_push_copies_non_jsonl_into_session_tree() {
     let repo = TempDir::new().unwrap();
     seed_project_with_attachment(claude.path());
 
-    let filter = FilterConfig::default();
+    let filter = common::every_project_filter();
     let report = push_artifacts(claude.path(), repo.path(), &filter).unwrap();
 
     let proj = repo.path().join("projects/-home-user-myproj");
@@ -616,7 +618,7 @@ fn test_attachments_respect_exclude_attachments_flag() {
 
     let filter = FilterConfig {
         exclude_attachments: true,
-        ..Default::default()
+        ..common::every_project_filter()
     };
     let report = push_artifacts(claude.path(), repo.path(), &filter).unwrap();
 
@@ -641,7 +643,7 @@ fn test_attachments_pull_ignores_remote_transcripts() {
     .unwrap();
     fs::write(proj.join("diagram.png"), b"PNGDATA").unwrap();
 
-    let filter = FilterConfig::default();
+    let filter = common::every_project_filter();
     let plan = plan_pull(machine_b.path(), repo.path(), &filter).unwrap();
     apply_pull(&plan, false).unwrap();
 
@@ -669,7 +671,7 @@ fn test_attachments_map_project_names_in_name_only_mode() {
 
     let filter = FilterConfig {
         use_project_name_only: true,
-        ..Default::default()
+        ..common::every_project_filter()
     };
     push_artifacts(claude.path(), repo.path(), &filter).unwrap();
     assert!(
@@ -711,7 +713,7 @@ fn test_unmapped_project_files_are_grouped_into_one_warning() {
     }
 
     let machine_that_never_mapped_shop = TempDir::new().unwrap();
-    let filter = FilterConfig::default();
+    let filter = common::every_project_filter();
     let plan = plan_pull(machine_that_never_mapped_shop.path(), repo.path(), &filter).unwrap();
 
     assert_eq!(plan.skipped, 3);

@@ -1,3 +1,5 @@
+mod common;
+
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -38,7 +40,7 @@ impl Machine {
 
         let filter = FilterConfig {
             sync_artifacts: ArtifactToggles::all_enabled(),
-            ..Default::default()
+            ..common::every_project_filter()
         };
         fs::write(
             config.join("claude-code-sync/config.toml"),
@@ -438,7 +440,7 @@ fn test_pull_warns_once_for_a_project_this_machine_never_mapped() {
     seed_full_claude_home(&machine_a.claude());
     let mut mapped = FilterConfig {
         sync_artifacts: ArtifactToggles::all_enabled(),
-        ..Default::default()
+        ..common::every_project_filter()
     };
     mapped
         .project_map

@@ -3,6 +3,13 @@
 use std::path::{Path, PathBuf};
 use tempfile::TempDir;
 
+pub fn every_project_filter() -> claude_code_sync::filter::FilterConfig {
+    claude_code_sync::filter::FilterConfig {
+        mapped_projects_only: false,
+        ..Default::default()
+    }
+}
+
 pub struct ConfigEnv {
     temp_dir: TempDir,
 }
