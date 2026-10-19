@@ -53,6 +53,10 @@ pub fn discover_sessions(
         .map(|entry| entry.into_path())
         .filter(|path| path.extension().and_then(|s| s.to_str()) == Some("jsonl"))
         .filter(|path| {
+            let relative = path.strip_prefix(base_path).unwrap_or(path);
+            crate::project_map::is_synced_path(filter, relative)
+        })
+        .filter(|path| {
             let included = filter.should_include(path);
             if !included {
                 warn_oversized(path, filter.max_file_size_bytes);

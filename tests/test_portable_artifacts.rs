@@ -118,6 +118,97 @@ fn an_unmapped_project_keeps_its_encoded_directory() {
         .is_file());
 }
 
+fn mapped_only_filter(id: &str, project_path: &str) -> FilterConfig {
+    let mut filter = mapped_filter(id, project_path);
+    filter.mapped_projects_only = true;
+    filter
+}
+
+#[test]
+fn mapped_projects_only_pushes_just_the_mapped_project() {
+    let repo = TempDir::new().unwrap();
+    let claude = TempDir::new().unwrap();
+    write(
+        &project_memory(claude.path(), "-home-a-work-app", "fact.md"),
+        "mapped\n",
+    );
+    write(
+        &project_memory(claude.path(), "-home-a-work-other", "fact.md"),
+        "unmapped\n",
+    );
+
+    push_artifacts(
+        claude.path(),
+        repo.path(),
+        &mapped_only_filter("app", "/home/a/work/app"),
+    )
+    .unwrap();
+
+    assert!(repo.path().join("projects/app/memory/fact.md").is_file());
+    assert!(!repo.path().join("projects/-home-a-work-other").exists());
+}
+
+#[test]
+fn mapped_projects_only_pulls_just_the_mapped_project_without_warning() {
+    let repo = TempDir::new().unwrap();
+    let machine_a = TempDir::new().unwrap();
+    let machine_b = TempDir::new().unwrap();
+    write(
+        &project_memory(machine_a.path(), "-home-a-work-app", "fact.md"),
+        "mapped\n",
+    );
+    write(
+        &project_memory(machine_a.path(), "-home-a-work-other", "fact.md"),
+        "unmapped\n",
+    );
+    write(
+        &project_memory(machine_a.path(), "-home-a-work-shop", "fact.md"),
+        "mapped elsewhere\n",
+    );
+    let mut filter_a = mapped_filter("app", "/home/a/work/app");
+    filter_a
+        .project_map
+        .insert("shop".to_string(), PathBuf::from("/home/a/work/shop"));
+    push_artifacts(machine_a.path(), repo.path(), &filter_a).unwrap();
+
+    let filter_b = mapped_only_filter("app", "/srv/b/app");
+    let plan = plan_pull(machine_b.path(), repo.path(), &filter_b).unwrap();
+    apply_pull(&plan, false).unwrap();
+
+    assert!(project_memory(machine_b.path(), "-srv-b-app", "fact.md").is_file());
+    assert!(!machine_b
+        .path()
+        .join("projects/-home-a-work-other")
+        .exists());
+    assert!(
+        plan.unmapped_projects.is_empty(),
+        "a project this machine chose not to sync is no miss to warn about"
+    );
+}
+
+/// Guards the reason no hold-back is needed: attachments never mirror
+/// deletions, so a project left out of sync loses nothing on either side.
+#[test]
+fn mapped_projects_only_keeps_the_repo_copy_of_a_project_it_stops_syncing() {
+    let repo = TempDir::new().unwrap();
+    let claude = TempDir::new().unwrap();
+    let other = project_memory(claude.path(), "-home-a-work-other", "fact.md");
+    write(&other, "pushed before\n");
+    sync_both_ways(claude.path(), repo.path(), &all_on_filter());
+
+    let filter = mapped_only_filter("app", "/home/a/work/app");
+    sync_both_ways(claude.path(), repo.path(), &filter);
+    sync_both_ways(claude.path(), repo.path(), &filter);
+
+    assert!(
+        repo.path()
+            .join("projects/-home-a-work-other/memory/fact.md")
+            .is_file(),
+        "not syncing a project is not deleting it from the repo"
+    );
+    assert_eq!(fs::read_to_string(&other).unwrap(), "pushed before\n");
+}
+
 #[test]
 fn a_memory_index_gains_the_other_machines_entries_instead_of_losing_them() {
     let repo = TempDir::new().unwrap();

@@ -238,6 +238,10 @@ fn collect(
                         *skipped += 1;
                         continue;
                     };
+                    let project_is_synced = crate::project_map::is_synced(filter, encoded);
+                    if !project_is_synced {
+                        continue;
+                    }
                     let project = project_names
                         .entry(encoded.to_string())
                         .or_insert_with(|| {
@@ -730,6 +734,12 @@ fn collect_repo_files(
         }
         // The marker exists to keep the directory, and belongs to no machine.
         if rel == Path::new(CATEGORY_MARKER) {
+            continue;
+        }
+        let is_session_tree = desc.dest == DestRoot::SessionTree;
+        let project_is_synced = crate::project_map::is_synced_path(filter, &rel);
+        let belongs_to_unsynced_project = is_session_tree && !project_is_synced;
+        if belongs_to_unsynced_project {
             continue;
         }
         if is_unsafe_rel_path(&rel) || is_denied(&rel) {

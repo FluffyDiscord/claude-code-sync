@@ -62,6 +62,11 @@ pub struct FilterConfig {
     #[serde(default)]
     pub project_map: crate::project_map::ProjectMap,
 
+    /// Sync only the projects in `project_map`; every other project, here or
+    /// in the repo, is left alone in both directions.
+    #[serde(default)]
+    pub mapped_projects_only: bool,
+
     /// Delete transcripts older than this many days from both the machine and
     /// the sync repository. Unset means the default window: the longer of six
     /// months and this machine's own Claude Code retention.
@@ -117,6 +122,7 @@ impl Default for FilterConfig {
             use_project_name_only: false,
             sync_artifacts: Default::default(),
             project_map: Default::default(),
+            mapped_projects_only: false,
             purge_older_than_days: None,
             purge_after_sync: false,
             warn_each_skipped_file: false,
@@ -400,6 +406,38 @@ pub fn set_warn_each_skipped_file(each_file: bool) -> Result<()> {
         .green()
     );
     Ok(())
+}
+
+/// Choose between syncing every project and only the mapped ones.
+pub fn set_mapped_projects_only(mapped_only: bool) -> Result<()> {
+    let mut config = FilterConfig::load()?;
+    config.mapped_projects_only = mapped_only;
+    config.validate()?;
+    config.save()?;
+
+    println!(
+        "{}",
+        format!("Projects synced: {}", projects_synced_label(mapped_only)).green()
+    );
+    let nothing_is_mapped = config.project_map.is_empty();
+    let syncs_nothing = mapped_only && nothing_is_mapped;
+    if syncs_nothing {
+        println!(
+            "{}",
+            "No project is mapped yet, so nothing syncs. Map one: \
+             claude-code-sync config --map-project <path>"
+                .yellow()
+        );
+    }
+    Ok(())
+}
+
+fn projects_synced_label(mapped_only: bool) -> &'static str {
+    if mapped_only {
+        "mapped only"
+    } else {
+        "all"
+    }
 }
 
 /// Set (or clear, when empty) the external merge command.
@@ -729,6 +767,11 @@ pub fn show_config() -> Result<()> {
     for (id, path) in &config.project_map {
         println!("    {} -> {}", id.cyan(), path.display());
     }
+    println!(
+        "  {}: {}",
+        "Projects synced".cyan(),
+        projects_synced_label(config.mapped_projects_only).cyan()
+    );
 
     println!("  {}:", "Artifact sync".cyan());
     for desc in crate::artifacts::registry::toggleable() {

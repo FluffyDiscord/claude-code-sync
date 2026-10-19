@@ -210,8 +210,10 @@ pub fn push_history(
     let sessions = discover_sessions(&claude_dir, &filter)?;
     println!("  {} {} sessions", "Found".green(), sessions.len());
 
-    // Check for project name collisions when using project-name-only mode
-    if filter.use_project_name_only {
+    // Check for project name collisions when using project-name-only mode;
+    // with mapped projects only, every synced project goes under its map id.
+    let names_can_collide = filter.use_project_name_only && !filter.mapped_projects_only;
+    if names_can_collide {
         let collisions = find_colliding_projects(&claude_dir);
         if !collisions.is_empty() {
             println!();

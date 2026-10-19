@@ -217,6 +217,11 @@ enum Commands {
         #[arg(long, value_name = "ID")]
         unmap_project: Vec<String>,
 
+        /// Sync only the projects mapped with --map-project; leave every
+        /// other project, here and in the repo, alone
+        #[arg(long, value_name = "BOOL")]
+        mapped_projects_only: Option<bool>,
+
         /// Warn once per file a pull cannot place, instead of one combined
         /// warning naming every project with no local match
         #[arg(long, value_name = "BOOL")]
@@ -639,6 +644,7 @@ fn main() -> Result<()> {
             disable_artifacts,
             map_project,
             unmap_project,
+            mapped_projects_only,
             warn_each_skipped_file,
             merge_tool,
             prefer_merge_tool,
@@ -664,6 +670,7 @@ fn main() -> Result<()> {
             let has_any_flag = has_filter_flag
                 || !map_project.is_empty()
                 || !unmap_project.is_empty()
+                || mapped_projects_only.is_some()
                 || warn_each_skipped_file.is_some()
                 || merge_tool.is_some()
                 || prefer_merge_tool.is_some()
@@ -690,6 +697,9 @@ fn main() -> Result<()> {
                 // invocation does not silently drop all but the first.
                 if !map_project.is_empty() || !unmap_project.is_empty() {
                     filter::update_project_map(&map_project, &unmap_project)?;
+                }
+                if let Some(mapped_only) = mapped_projects_only {
+                    filter::set_mapped_projects_only(mapped_only)?;
                 }
                 if let Some(each_file) = warn_each_skipped_file {
                     filter::set_warn_each_skipped_file(each_file)?;

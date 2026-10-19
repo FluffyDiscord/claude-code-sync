@@ -223,3 +223,46 @@ fn test_push_plan_detects_real_modification() {
     );
     assert_eq!(plan2.unchanged, 2);
 }
+
+#[test]
+#[serial]
+fn mapped_projects_only_discovers_just_the_mapped_projects() {
+    let _env = ConfigEnv::new();
+    let projects = TempDir::new().unwrap();
+    for project in ["-home-user-myproj", "-home-user-other", "myproj", "other"] {
+        fs::create_dir_all(projects.path().join(project)).unwrap();
+        write_transcript(
+            &projects.path().join(project).join("s.jsonl"),
+            PARENT_SESSION_ID,
+            project,
+        );
+    }
+    let mut filter = FilterConfig::default();
+    filter
+        .project_map
+        .insert("myproj".to_string(), "/home/user/myproj".into());
+
+    let everything = discover_sessions(projects.path(), &filter).unwrap();
+    assert_eq!(everything.len(), 4, "off by default: every project syncs");
+
+    filter.mapped_projects_only = true;
+    let mut discovered: Vec<String> = discover_sessions(projects.path(), &filter)
+        .unwrap()
+        .iter()
+        .map(|session| {
+            let project_dir = session.file_path.parent().unwrap();
+            project_dir
+                .file_name()
+                .unwrap()
+                .to_string_lossy()
+                .into_owned()
+        })
+        .collect();
+    discovered.sort();
+
+    assert_eq!(
+        discovered,
+        ["-home-user-myproj", "myproj"],
+        "the mapped project by its local encoded path and by its repo id"
+    );
+}

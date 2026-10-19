@@ -31,7 +31,7 @@ cargo doc --open --no-deps --all-features
 | **Interactive Onboarding** | First-time setup wizard guides you through configuration |
 | **Non-Interactive Init** | Config file support for CI/CD and automation |
 | **Smart Conflict Resolution** | Interactive TUI for resolving conflicts with preview |
-| **Selective Sync** | Filter by project, date, or exclude attachments |
+| **Selective Sync** | Filter by project, date, or exclude attachments; or sync only the projects mapped on this machine |
 | **Git LFS Support** | Efficiently store large conversation files with Git LFS |
 | **Undo Operations** | Rollback pull/push with automatic snapshots |
 | **Operation History** | Track and review past sync operations |
@@ -213,6 +213,16 @@ unmapped project and how many files it holds. To get a line per file instead:
 ```bash
 claude-code-sync config --warn-each-skipped-file true
 ```
+
+**Sync only the projects you map here.** Every other project, on this machine
+or in the repo, is left alone both ways. No warnings, nothing deleted:
+
+```bash
+claude-code-sync config --mapped-projects-only true
+```
+
+> Limits project files only (transcripts, attachments, project memory).
+> Settings, skills and other artifacts still sync. `purge` still covers every project.
 
 ### Machine-neutral paths in config files
 
@@ -952,6 +962,9 @@ purge_after_sync = false
 
 # Warn once per file a pull cannot place, instead of one combined warning
 warn_each_skipped_file = false
+
+# Sync only the projects in [project_map]; leave every other one alone
+mapped_projects_only = false
 
 # External three-way merge command offered when a file differs or conflicts
 merge_tool = "phpstorm merge"

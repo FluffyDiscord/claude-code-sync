@@ -120,6 +120,32 @@ pub fn canonical_id(map: &ProjectMap, encoded_dir: &str) -> Option<String> {
         .map(|(id, _)| id.clone())
 }
 
+/// Whether a project directory, local (encoded) or in the sync repo (id or
+/// encoded), takes part in sync on this machine: every one does, unless
+/// `mapped_projects_only` limits sync to the map.
+pub fn is_synced(filter: &FilterConfig, project_dir_name: &str) -> bool {
+    if !filter.mapped_projects_only {
+        return true;
+    }
+    let is_mapped_id = filter.project_map.contains_key(project_dir_name);
+    if is_mapped_id {
+        return true;
+    }
+    canonical_id(&filter.project_map, project_dir_name).is_some()
+}
+
+/// [`is_synced`] for a file, given its path relative to a projects directory.
+/// A file beside the project directories belongs to no project.
+pub fn is_synced_path(filter: &FilterConfig, relative: &Path) -> bool {
+    if !filter.mapped_projects_only {
+        return true;
+    }
+    match split_project_path(relative) {
+        Some((project, _)) => is_synced(filter, project),
+        None => false,
+    }
+}
+
 /// The directory name a local encoded project directory takes in the sync repo.
 pub fn repo_dir_name(filter: &FilterConfig, encoded_dir: &str) -> String {
     if let Some(id) = canonical_id(&filter.project_map, encoded_dir) {
@@ -426,6 +452,26 @@ mod tests {
                 "{encoded}"
             );
         }
+    }
+
+    #[test]
+    fn mapped_projects_only_syncs_a_mapped_project_by_id_or_encoded_path() {
+        let mut filter = mapped(&[("shop", "/home/user/work/shop")]);
+        assert!(
+            is_synced(&filter, "-home-user-work-other"),
+            "off by default"
+        );
+
+        filter.mapped_projects_only = true;
+
+        assert!(is_synced(&filter, "shop"));
+        assert!(is_synced(&filter, "-home-user-work-shop"));
+        assert!(!is_synced(&filter, "-home-user-work-other"));
+        assert!(!is_synced(&filter, "other"));
+        assert!(
+            !is_synced_path(&filter, Path::new("stray.jsonl")),
+            "a file beside the projects belongs to none"
+        );
     }
 
     #[test]
