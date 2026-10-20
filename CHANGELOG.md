@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.4.15](https://github.com/FluffyDiscord/claude-code-sync/compare/v0.4.14...v0.4.15) (2026-10-20)
+
+
+### Features
+
+* download and check out only the mapped projects ([d7c20b6](https://github.com/FluffyDiscord/claude-code-sync/commit/d7c20b6635d73b11afcff812f84d5d0ea1fb96bf))
+* sync only the projects mapped on this machine ([32904cf](https://github.com/FluffyDiscord/claude-code-sync/commit/32904cfc77f2c7557fb156b0ae65d3fea4caa922))
+
+
+### Code Refactoring
+
+* strip comments from the test_status.rs scratch script ([dce662b](https://github.com/FluffyDiscord/claude-code-sync/commit/dce662b40f2838f870b56590433fb9bf87259148))
+* strip prose doc comments and explanatory comments ([f9e4fc1](https://github.com/FluffyDiscord/claude-code-sync/commit/f9e4fc1ea97b1ad3b75ad53da21047e60a6335ae))
+
 ## [0.4.14](https://github.com/FluffyDiscord/claude-code-sync/compare/v0.4.13...v0.4.14) (2026-10-16)
 
 
