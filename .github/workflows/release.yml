@@ -2,97 +2,55 @@ name: Release
 
 on:
   push:
-    branches: [main]
     # Binaries are not committed: every tag builds them and attaches them to
-    # its GitHub release, whether release-please made the tag or a person did.
+    # its GitHub release.
     tags: ["v*"]
-  workflow_dispatch:
 
 permissions:
   contents: write
-  pull-requests: write
 
 jobs:
-  release-please:
-    name: Release Please
-    # A tag push is already a release; release-please only opens and lands
-    # release PRs from the branch.
-    if: github.ref_type != 'tag'
-    runs-on: ubuntu-latest
-    outputs:
-      release_created: ${{ steps.rp.outputs.release_created }}
-      tag_name: ${{ steps.rp.outputs.tag_name }}
-    steps:
-      - name: Run release-please
-        id: rp
-        uses: googleapis/release-please-action@v4
-        with:
-          config-file: release-please-config.json
-          manifest-file: .release-please-manifest.json
-
   release-tag:
-    name: Resolve Release Tag
-    # `!cancelled()`: release-please is skipped on a tag push, and a skipped
-    # dependency would otherwise skip everything that needs it.
-    if: ${{ !cancelled() }}
-    needs: release-please
+    name: Create Release
     runs-on: ubuntu-latest
     outputs:
-      tag: ${{ steps.pick.outputs.tag }}
+      tag: ${{ github.ref_name }}
     steps:
-      - name: Pick the tag to publish
-        env:
-          RELEASE_PLEASE_TAG: ${{ needs.release-please.outputs.tag_name }}
-          RELEASE_CREATED: ${{ needs.release-please.outputs.release_created }}
-        id: pick
-        run: |
-          if [ "${{ github.ref_type }}" = tag ]; then
-            echo "tag=${{ github.ref_name }}" >> "$GITHUB_OUTPUT"
-          elif [ "$RELEASE_CREATED" = true ]; then
-            echo "tag=$RELEASE_PLEASE_TAG" >> "$GITHUB_OUTPUT"
-          else
-            echo "tag=" >> "$GITHUB_OUTPUT"
-          fi
-
       - name: Checkout the tag
-        if: steps.pick.outputs.tag != ''
         uses: actions/checkout@v7
         with:
-          ref: ${{ steps.pick.outputs.tag }}
+          fetch-depth: 0
 
-      # A hand-pushed tag is the one path where nothing has bumped Cargo.toml,
-      # and a binary whose --version disagrees with its release is worse than
-      # no release at all. Checked once, before any platform builds.
+      # A binary whose --version disagrees with its release is worse than no
+      # release at all. Checked once, before any platform builds.
       - name: Check the crate version matches the tag
-        if: steps.pick.outputs.tag != ''
         env:
-          TAG: ${{ steps.pick.outputs.tag }}
+          TAG: ${{ github.ref_name }}
         run: |
           crate_version="$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[0].version')"
           if [ "$crate_version" != "${TAG#v}" ]; then
             echo "Cargo.toml is $crate_version but the tag is $TAG." >&2
-            echo "Bump the version (and .release-please-manifest.json) in the tagged commit." >&2
+            echo "Bump the version in Cargo.toml in the tagged commit." >&2
             exit 1
           fi
 
       # Once, here: the matrix jobs racing to create the same release would
       # leave the losers failed and their platform's assets missing.
       - name: Ensure the release exists
-        if: steps.pick.outputs.tag != ''
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG: ${{ steps.pick.outputs.tag }}
+          TAG: ${{ github.ref_name }}
         run: |
+          previous_tag="$(git describe --tags --abbrev=0 "$TAG^" 2>/dev/null || true)"
+          range="${previous_tag:+$previous_tag..}$TAG"
+          git log --no-merges --format='- %s (%h)' "$range" > notes.md
           gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 ||
             gh release create "$TAG" --repo "$GITHUB_REPOSITORY" \
-              --title "$TAG" --generate-notes
+              --title "$TAG" --notes-file notes.md
 
   build-binaries:
     name: Build Release Binaries
     needs: release-tag
-    # `!cancelled()` again: a skipped job cascades down the whole chain, and
-    # release-please is skipped on every tag, so without it nothing builds.
-    if: ${{ !cancelled() && needs.release-tag.outputs.tag != '' }}
     permissions:
       contents: write
     uses: ./.github/workflows/build.yml

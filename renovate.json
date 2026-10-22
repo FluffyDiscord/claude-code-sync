@@ -8,27 +8,20 @@
     "before 5am every weekday",
     "every weekend"
   ],
-  "labels": [
-    "dependencies"
-  ],
   "rangeStrategy": "bump",
   "semanticCommits": "enabled",
   "semanticCommitType": "deps",
   "semanticCommitScope": null,
   "vulnerabilityAlerts": {
-    "labels": [
-      "security"
-    ],
     "automerge": true,
-    "automergeType": "pr"
+    "automergeType": "branch"
   },
-  "prConcurrentLimit": 20,
-  "prCreation": "immediate",
+  "prCreation": "approval",
   "packageRules": [
     {
       "matchUpdateTypes": ["minor", "patch", "pin", "digest", "major"],
       "automerge": true,
-      "automergeType": "pr",
+      "automergeType": "branch",
       "minimumReleaseAge": "3 days"
     }
   ]

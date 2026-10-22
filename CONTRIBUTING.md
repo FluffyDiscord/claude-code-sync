@@ -43,22 +43,9 @@ Thank you for your interest in contributing to claude-code-sync! This document p
 
 ## Development Workflow
 
-### 1. Create a Feature Branch
+**Work goes straight to `main`.**
 
-```bash
-git checkout -b feature/your-feature-name
-# or
-git checkout -b fix/bug-description
-```
-
-Branch naming conventions:
-- `feature/` - New features
-- `fix/` - Bug fixes
-- `docs/` - Documentation updates
-- `refactor/` - Code refactoring
-- `test/` - Test additions or fixes
-
-### 2. Make Your Changes
+### 1. Make Your Changes
 
 - Write clear, concise code
 - Follow Rust best practices and idioms
@@ -66,7 +53,7 @@ Branch naming conventions:
 - Update documentation as needed
 - Keep commits focused and atomic
 
-### 3. Run Quality Checks
+### 2. Run Quality Checks
 
 Before committing, ensure your code passes all checks:
 
@@ -84,7 +71,7 @@ cargo test
 cargo check
 ```
 
-### 4. Commit Your Changes
+### 3. Commit Your Changes
 
 Write clear commit messages following this format:
 
@@ -116,17 +103,11 @@ feat: add support for encrypted repositories
 Closes #123
 ```
 
-### 5. Push and Create Pull Request
+### 4. Push
 
 ```bash
-git push origin feature/your-feature-name
+git push origin main
 ```
-
-Then create a Pull Request on GitHub with:
-- Clear description of changes
-- Reference to related issues
-- Screenshots (if UI changes)
-- Test results
 
 ## Coding Standards
 
@@ -240,50 +221,19 @@ All new code should include tests:
 - Return descriptive errors to users
 - Log errors for debugging
 
-## Pull Request Process
+## Releasing
 
-1. **Update Documentation**
-   - Update README.md if behavior changes
-   - Add examples to EXAMPLES.md for new features
-   - Update CHANGELOG.md (if exists)
+**A pushed `v*` tag is a release.** CI checks the tag matches `Cargo.toml`, creates the GitHub release with the commits since the last tag as notes, and attaches every platform's binary.
 
-2. **Add Tests**
-   - Write tests for new functionality
-   - Ensure all tests pass
-   - Aim for >80% code coverage
+```bash
+# bump `version` in Cargo.toml, then:
+cargo check
+git commit -am "chore: release 0.4.15"
+git tag v0.4.15
+git push origin main v0.4.15
+```
 
-3. **Update Version** (for maintainers)
-   - Follow [Semantic Versioning](https://semver.org/)
-   - Update version in Cargo.toml
-
-4. **PR Description Template**
-   ```markdown
-   ## Description
-   Brief description of changes
-
-   ## Type of Change
-   - [ ] Bug fix
-   - [ ] New feature
-   - [ ] Breaking change
-   - [ ] Documentation update
-
-   ## Testing
-   - [ ] All tests pass
-   - [ ] Added new tests
-   - [ ] Manual testing performed
-
-   ## Checklist
-   - [ ] Code follows style guidelines
-   - [ ] Self-review performed
-   - [ ] Comments added for complex code
-   - [ ] Documentation updated
-   - [ ] No new warnings
-   ```
-
-5. **Review Process**
-   - Respond to feedback promptly
-   - Make requested changes
-   - Re-request review after updates
+Follow [Semantic Versioning](https://semver.org/).
 
 ## Areas for Contribution
 
@@ -363,7 +313,7 @@ Include:
 ## Questions?
 
 - Open a discussion on GitHub
-- Check existing issues and PRs
+- Check existing issues
 - Read the documentation (README.md, EXAMPLES.md)
 
 ## License

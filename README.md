@@ -334,8 +334,8 @@ and checksums to that tag's GitHub release:
 git tag v0.4.0 && git push origin v0.4.0
 ```
 
-A tag release-please creates works the same way; a tag you push by hand gets a
-release created for it with generated notes. Grab the asset for your platform
+The release is created for it, with the commits since the previous tag as
+notes. Grab the asset for your platform
 from the [releases page](https://github.com/FluffyDiscord/claude-code-sync/releases).
 
 To build all of them locally instead — one Linux or macOS host, no Apple
@@ -1180,8 +1180,4 @@ This may indicate:
 
 ## Contributing
 
-Contributions are welcome! Please:
-1. Fork the repository
-2. Create a feature branch
-3. Add tests for new functionality
-4. Submit a pull request
+See [CONTRIBUTING.md](CONTRIBUTING.md).

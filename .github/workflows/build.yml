@@ -2,8 +2,8 @@ name: Build Binaries
 
 # The release build matrix, shared by two callers:
 #   - release.yml calls it with a tag, and every asset is uploaded to that release.
-#   - pull requests that touch the build inputs run it without a tag, so a
-#     broken target surfaces in review rather than halfway through a release.
+#   - a push to main that touches the build inputs runs it without a tag, so a
+#     broken target surfaces before the next release rather than halfway through it.
 # Asset names are a public interface: `self-update` and the README's download
 # links construct them. Rename with care.
 on:
@@ -13,7 +13,7 @@ on:
         description: Release tag to build and upload assets to
         type: string
         required: true
-  pull_request:
+  push:
     branches: [main]
     paths:
       - Cargo.toml
@@ -62,7 +62,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
         with:
-          # Empty on pull_request, which checks out the PR head.
+          # Empty on a push to main, which checks out the pushed commit.
           ref: ${{ inputs.tag }}
 
       - name: Install mise
