@@ -1,3 +1,4 @@
+use claude_code_sync::git::attributes::ensure_sync_attributes;
 use claude_code_sync::git::GitRepo;
 use std::fs;
 use tempfile::TempDir;
@@ -123,6 +124,7 @@ fn remote_with_two_projects() -> SharedRemote {
 
     let other_machine = root.path().join("other");
     git(root.path(), &["clone", "--quiet", &url, "other"]);
+    ensure_sync_attributes(&other_machine).unwrap();
     write(other_machine.join("projects/a/s.jsonl"), "a1\n");
     write(other_machine.join("projects/b/s.jsonl"), "b1\n");
     write(other_machine.join("artifacts/skills/x.md"), "x\n");
