@@ -1,0 +1,18 @@
+# `cargo deny check advisories bans` (mise run audit). Nothing deprecated,
+# abandoned or with a security advisory ships.
+
+[advisories]
+unmaintained = "all"
+unsound = "all"
+yanked = "deny"
+ignore = []
+
+[bans]
+multiple-versions = "allow"
+deny = [
+    { crate = "atty", reason = "unmaintained and unsound; use std::io::IsTerminal" },
+    { crate = "fuzzy-matcher", reason = "archived upstream" },
+    # No release since 2020 and no advisory. Allowed only where crossterm, the
+    # one maintained terminal backend inquire offers, still needs it on Windows.
+    { crate = "winapi", wrappers = ["crossterm", "crossterm_winapi"], reason = "abandoned; use windows-sys" },
+]

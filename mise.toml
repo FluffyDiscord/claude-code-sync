@@ -4,7 +4,7 @@ rust = { version = "1.96", profile = "default" } # default profile includes rust
 # cargo-binstall lets the cargo: backend below install prebuilt binaries instead of compiling.
 cargo-binstall = "1.20"
 "cargo:cargo-tarpaulin" = "0.37"
-"cargo:cargo-audit" = "0.22"
+"cargo:cargo-deny" = "0.20"
 
 [env]
 CARGO_TERM_COLOR = "always"
@@ -50,8 +50,8 @@ run = [
 ]
 
 [tasks.audit]
-description = "Security audit of dependencies"
-run = "cargo audit"
+description = "Advisories, unmaintained crates and the ban list in deny.toml"
+run = "cargo deny check advisories bans"
 
 [tasks.coverage]
 description = "Coverage report (cobertura.xml) via tarpaulin; single-threaded like every test run here"
