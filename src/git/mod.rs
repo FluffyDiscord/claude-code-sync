@@ -3,7 +3,7 @@ pub mod lfs;
 
 use anyhow::{anyhow, Context, Result};
 use std::collections::BTreeMap;
-use std::io::IsTerminal;
+use std::io::{BufReader, Read};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
@@ -128,24 +128,26 @@ impl GitRepo {
     }
 
     fn run_git_with_progress(&self, args: &[&str]) -> Result<()> {
-        let mut command = Command::new("git");
-        command
+        let mut child = Command::new("git")
             .args(args)
-            .arg("--quiet")
+            .arg("--progress")
             .current_dir(&self.workdir)
-            .stderr(Stdio::inherit());
+            .stderr(Stdio::piped())
+            .spawn()
+            .with_context(|| format!("Failed to run 'git {}'", args.join(" ")))?;
 
-        let on_terminal = std::io::stderr().is_terminal();
-        if on_terminal {
-            command.arg("--progress");
-        }
-
-        let status = command
-            .status()
+        let stderr = child.stderr.take().expect("stderr is piped");
+        let messages = show_git_progress(stderr);
+        let status = child
+            .wait()
             .with_context(|| format!("Failed to run 'git {}'", args.join(" ")))?;
 
         if !status.success() {
-            return Err(anyhow!("git {} failed", args.join(" ")));
+            return Err(anyhow!(
+                "git {} failed:\n{}",
+                args.join(" "),
+                messages.join("\n")
+            ));
         }
 
         Ok(())
@@ -504,6 +506,59 @@ impl GitRepo {
     pub fn reset_soft(&self, commit: &str) -> Result<()> {
         self.run_git_ok(&["reset", "--soft", commit])
     }
+}
+
+fn show_git_progress(stderr: impl Read) -> Vec<String> {
+    let mut bar = None;
+    let mut messages = Vec::new();
+    let mut line = Vec::new();
+
+    for byte in BufReader::new(stderr).bytes() {
+        let Ok(byte) = byte else {
+            break;
+        };
+        let ends_line = byte == b'\r' || byte == b'\n';
+        if !ends_line {
+            line.push(byte);
+            continue;
+        }
+        show_git_progress_line(&String::from_utf8_lossy(&line), &mut bar, &mut messages);
+        line.clear();
+    }
+    show_git_progress_line(&String::from_utf8_lossy(&line), &mut bar, &mut messages);
+
+    messages
+}
+
+fn show_git_progress_line(
+    line: &str,
+    bar: &mut Option<indicatif::ProgressBar>,
+    messages: &mut Vec<String>,
+) {
+    let line = line.trim_end();
+    if line.is_empty() {
+        return;
+    }
+    match parse_git_progress(line) {
+        Some((phase, done, total)) => {
+            let bar = bar.get_or_insert_with(|| crate::progress::bar(0, phase.to_string()));
+            bar.set_length(total);
+            bar.set_position(done);
+            bar.set_message(phase.to_string());
+        }
+        None => messages.push(line.to_string()),
+    }
+}
+
+fn parse_git_progress(line: &str) -> Option<(&str, u64, u64)> {
+    let line = line.strip_prefix("remote: ").unwrap_or(line);
+    let (phase, rest) = line.split_once(": ")?;
+    let (_, counted) = rest.split_once('(')?;
+    let (counts, _) = counted.split_once(')')?;
+    let (done, total) = counts.split_once('/')?;
+    let done = done.trim().parse().ok()?;
+    let total = total.trim().parse().ok()?;
+    Some((phase, done, total))
 }
 
 #[cfg(test)]
