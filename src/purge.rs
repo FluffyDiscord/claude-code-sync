@@ -1,10 +1,12 @@
 use anyhow::{bail, Context, Result};
 use chrono::{DateTime, Duration, Utc};
+use indicatif::ParallelProgressIterator;
 use rayon::prelude::*;
 use serde_json::Value;
 use std::path::{Path, PathBuf};
 
 use crate::git::GitRepo;
+use crate::sync::summary_cache::SummaryCache;
 
 pub const MINIMUM_RETENTION_DAYS: u32 = 30;
 
@@ -109,15 +111,18 @@ pub fn plan(
     let mut by_session: std::collections::BTreeMap<String, SessionCopies> =
         std::collections::BTreeMap::new();
 
+    let cache = SummaryCache::load();
     for transcripts_root in [claude_projects_dir, repo_projects_dir] {
-        let summarized: Vec<(PathBuf, Result<crate::parser::ConversationSession>)> =
-            transcripts(transcripts_root)
-                .into_par_iter()
-                .map(|transcript| {
-                    let summary = crate::parser::ConversationSession::from_file(&transcript);
-                    (transcript, summary)
-                })
-                .collect();
+        let transcripts = transcripts(transcripts_root);
+        let progress = crate::progress::bar(transcripts.len(), "Checking transcript ages");
+        let summarized: Vec<(PathBuf, Result<crate::parser::ConversationSession>)> = transcripts
+            .into_par_iter()
+            .progress_with(progress)
+            .map(|transcript| {
+                let summary = cache.summarize(&transcript).map(|cached| cached.session);
+                (transcript, summary)
+            })
+            .collect();
 
         for (transcript, summary) in summarized {
             let session = match summary {

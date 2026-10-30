@@ -5,7 +5,7 @@ pub mod push;
 mod remote;
 mod state;
 mod status;
-mod summary_cache;
+pub(crate) mod summary_cache;
 
 pub use init::{init_from_onboarding, init_sync_repo, print_map_project_hint};
 pub use pull::pull_history;
