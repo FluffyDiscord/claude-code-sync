@@ -6,7 +6,9 @@ use std::path::{Path, PathBuf};
 
 use crate::git::GitRepo;
 
-pub const MINIMUM_RETENTION_DAYS: u32 = 180;
+pub const MINIMUM_RETENTION_DAYS: u32 = 30;
+
+pub const DEFAULT_RETENTION_DAYS: u32 = 180;
 
 pub const CLAUDE_CODE_DEFAULT_RETENTION_DAYS: u32 = 30;
 
@@ -51,16 +53,16 @@ pub struct PurgeReport {
 }
 
 pub fn retention_days(claude_dir: &Path, configured: Option<u32>) -> u32 {
-    let floor = MINIMUM_RETENTION_DAYS.max(claude_code_retention_days(claude_dir));
     match configured {
-        Some(days) if days < floor => {
+        Some(days) if days < MINIMUM_RETENTION_DAYS => {
             log::warn!(
-                "Purge window of {days} days is below the {floor}-day minimum; using {floor}"
+                "Purge window of {days} days is below the {MINIMUM_RETENTION_DAYS}-day minimum; \
+                 using {MINIMUM_RETENTION_DAYS}"
             );
-            floor
+            MINIMUM_RETENTION_DAYS
         }
         Some(days) => days,
-        None => floor,
+        None => DEFAULT_RETENTION_DAYS.max(claude_code_retention_days(claude_dir)),
     }
 }
 
@@ -312,7 +314,7 @@ mod tests {
     #[test]
     fn the_default_window_is_six_months() {
         let claude = claude_dir_with(None);
-        assert_eq!(retention_days(claude.path(), None), MINIMUM_RETENTION_DAYS);
+        assert_eq!(retention_days(claude.path(), None), DEFAULT_RETENTION_DAYS);
     }
 
     #[test]
@@ -324,13 +326,13 @@ mod tests {
     #[test]
     fn a_shorter_claude_code_window_does_not_shorten_ours() {
         let claude = claude_dir_with(Some(r#"{"cleanupPeriodDays": 7}"#));
-        assert_eq!(retention_days(claude.path(), None), MINIMUM_RETENTION_DAYS);
+        assert_eq!(retention_days(claude.path(), None), DEFAULT_RETENTION_DAYS);
     }
 
     #[test]
     fn unreadable_settings_fall_back_to_claude_codes_default() {
         let claude = claude_dir_with(Some("{ not json"));
-        assert_eq!(retention_days(claude.path(), None), MINIMUM_RETENTION_DAYS);
+        assert_eq!(retention_days(claude.path(), None), DEFAULT_RETENTION_DAYS);
         assert_eq!(
             claude_code_retention_days(claude.path()),
             CLAUDE_CODE_DEFAULT_RETENTION_DAYS
@@ -372,15 +374,12 @@ mod tests {
     }
 
     #[test]
-    fn a_configured_window_can_lengthen_the_minimum_but_never_shorten_it() {
+    fn a_configured_window_wins_down_to_the_minimum() {
         let claude = claude_dir_with(Some(r#"{"cleanupPeriodDays": 400}"#));
         assert_eq!(retention_days(claude.path(), Some(500)), 500);
-        assert_eq!(retention_days(claude.path(), Some(30)), 400);
-        assert_eq!(retention_days(claude.path(), Some(0)), 400);
-
-        let defaults = claude_dir_with(None);
+        assert_eq!(retention_days(claude.path(), Some(180)), 180);
         assert_eq!(
-            retention_days(defaults.path(), Some(1)),
+            retention_days(claude.path(), Some(1)),
             MINIMUM_RETENTION_DAYS
         );
     }

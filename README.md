@@ -289,8 +289,8 @@ claude-code-sync purge --older-than 365
 The default window is the **longer of six months and this machine's own Claude
 Code retention** (`cleanupPeriodDays` in `~/.claude/settings.json`, 30 days by
 default) — Claude Code deletes those transcripts by itself anyway, so the sync
-repo is never the shorter-lived copy. That is also the minimum: a window of your
-own can only be longer. Set one, and let a sync do it for you, with:
+repo is never the shorter-lived copy. A window of your own wins; the minimum is
+30 days. Set one, and let a sync do it for you, with:
 
 ```bash
 claude-code-sync config --purge-older-than 365
@@ -648,7 +648,7 @@ claude-code-sync purge --older-than 365
 ```
 
 **Options:**
-- `--older-than <DAYS>`: retention window for this run (default and minimum: the
+- `--older-than <DAYS>`: retention window for this run (minimum 30; default: the
   longer of 180 days and this machine's Claude Code `cleanupPeriodDays`)
 - `--dry-run`: show the plan and stop
 - `-y, --yes`: delete without asking

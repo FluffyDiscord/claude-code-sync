@@ -1,7 +1,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use claude_code_sync::purge::{self, MINIMUM_RETENTION_DAYS};
+use claude_code_sync::purge::{self, DEFAULT_RETENTION_DAYS};
 use tempfile::TempDir;
 
 fn transcript(projects_dir: &Path, project: &str, session: &str, age_days: i64) -> PathBuf {
@@ -45,7 +45,7 @@ fn an_aged_out_transcript_goes_from_both_sides_at_once() {
     let local = transcript(claude.path(), "-home-user-app", "old-session", 400);
     let stored = transcript(repo.path(), "-home-user-app", "old-session", 400);
 
-    let purged = purge_with_window(claude.path(), repo.path(), MINIMUM_RETENTION_DAYS);
+    let purged = purge_with_window(claude.path(), repo.path(), DEFAULT_RETENTION_DAYS);
 
     assert_eq!(purged, 1, "one session, both copies");
     assert!(!local.exists());
@@ -58,7 +58,7 @@ fn a_transcript_inside_the_window_is_untouched() {
     let repo = TempDir::new().unwrap();
     let recent = transcript(claude.path(), "-home-user-app", "recent", 179);
 
-    let plan = purge::plan(claude.path(), repo.path(), MINIMUM_RETENTION_DAYS).unwrap();
+    let plan = purge::plan(claude.path(), repo.path(), DEFAULT_RETENTION_DAYS).unwrap();
     purge::apply(&plan).unwrap();
 
     assert!(plan.is_empty());
@@ -76,7 +76,7 @@ fn age_comes_from_the_last_message_not_the_files_mtime() {
         "the file itself is brand new"
     );
 
-    let purged = purge_with_window(claude.path(), repo.path(), MINIMUM_RETENTION_DAYS);
+    let purged = purge_with_window(claude.path(), repo.path(), DEFAULT_RETENTION_DAYS);
 
     assert_eq!(purged, 1);
     assert!(!pulled.exists());
@@ -93,7 +93,7 @@ fn a_transcript_with_no_timestamp_is_never_purged() {
         "{\"type\":\"user\",\"uuid\":\"u1\",\"sessionId\":\"undated\"}\n",
     );
 
-    let plan = purge::plan(claude.path(), repo.path(), MINIMUM_RETENTION_DAYS).unwrap();
+    let plan = purge::plan(claude.path(), repo.path(), DEFAULT_RETENTION_DAYS).unwrap();
     purge::apply(&plan).unwrap();
 
     assert_eq!(plan.undated, 1);
@@ -115,7 +115,7 @@ fn everything_claude_code_keeps_beside_a_transcript_goes_with_it() {
     fs::write(project.join("old-session.jsonl.superseded-123"), "{}\n").unwrap();
     let keep = transcript(claude.path(), "-home-user-app", "recent", 10);
 
-    purge_with_window(claude.path(), repo.path(), MINIMUM_RETENTION_DAYS);
+    purge_with_window(claude.path(), repo.path(), DEFAULT_RETENTION_DAYS);
 
     assert!(!old.exists());
     assert!(!project.join("old-session").exists());
@@ -143,7 +143,7 @@ fn a_subagent_transcript_never_ages_out_on_its_own() {
     )
     .unwrap();
 
-    let plan = purge::plan(claude.path(), repo.path(), MINIMUM_RETENTION_DAYS).unwrap();
+    let plan = purge::plan(claude.path(), repo.path(), DEFAULT_RETENTION_DAYS).unwrap();
     purge::apply(&plan).unwrap();
 
     assert!(
@@ -165,7 +165,7 @@ fn a_session_used_recently_elsewhere_is_not_old_here() {
         let local = transcript(claude.path(), "-home-user-app", "shared", local_age);
         let remote = transcript(repo.path(), "-home-user-app", "shared", repo_age);
 
-        let plan = purge::plan(claude.path(), repo.path(), MINIMUM_RETENTION_DAYS).unwrap();
+        let plan = purge::plan(claude.path(), repo.path(), DEFAULT_RETENTION_DAYS).unwrap();
         purge::apply(&plan).unwrap();
 
         assert!(plan.is_empty(), "local {local_age}d, repo {repo_age}d");
@@ -181,7 +181,7 @@ fn an_unreadable_copy_keeps_the_whole_session() {
     let old = transcript(claude.path(), "-home-user-app", "half-written", 400);
     let mid_write = write_transcript(repo.path(), "-home-user-app", "half-written", "{\"type\"");
 
-    let plan = purge::plan(claude.path(), repo.path(), MINIMUM_RETENTION_DAYS).unwrap();
+    let plan = purge::plan(claude.path(), repo.path(), DEFAULT_RETENTION_DAYS).unwrap();
     purge::apply(&plan).unwrap();
 
     assert_eq!(plan.unreadable, 1);
@@ -199,7 +199,7 @@ fn a_sessions_companion_files_go_with_it() {
     let stopoffset = project.join("old-session.jsonl.stopoffset");
     fs::write(&stopoffset, "42").unwrap();
 
-    purge_with_window(claude.path(), repo.path(), MINIMUM_RETENTION_DAYS);
+    purge_with_window(claude.path(), repo.path(), DEFAULT_RETENTION_DAYS);
 
     assert!(!old.exists());
     assert!(!stopoffset.exists());
