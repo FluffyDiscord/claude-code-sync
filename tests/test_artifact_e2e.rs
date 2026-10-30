@@ -462,7 +462,9 @@ fn test_pull_warns_once_for_a_project_this_machine_never_mapped() {
         "three unplaceable files, one warning: {warnings:?}"
     );
     assert!(
-        unplaceable[0].contains("webapp (3)"),
+        unplaceable[0]
+            .lines()
+            .any(|row| row.split_whitespace().eq(["webapp", "3"])),
         "the warning names the project and counts its files: {}",
         unplaceable[0]
     );

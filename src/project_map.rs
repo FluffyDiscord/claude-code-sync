@@ -224,6 +224,10 @@ pub fn merge_skipped(into: &mut SkippedByProject, more: &SkippedByProject) {
 
 const MAPPING_REMEDY: &str = "Map each one: claude-code-sync config --map-project <id>=<path>.";
 
+const PROJECT_HEADER: &str = "Project";
+
+const FILES_HEADER: &str = "Files";
+
 pub fn skipped_project_warnings(skipped: &SkippedByProject, each_file: bool) -> Vec<String> {
     if skipped.is_empty() {
         return Vec::new();
@@ -246,16 +250,30 @@ pub fn skipped_project_warnings(skipped: &SkippedByProject, each_file: bool) -> 
     }
 
     let total_files: usize = skipped.values().map(Vec::len).sum();
-    let project_list: Vec<String> = skipped
-        .iter()
-        .map(|(project, files)| format!("{project} ({})", files.len()))
-        .collect();
+    let project_width = skipped
+        .keys()
+        .map(|project| project.chars().count())
+        .chain([PROJECT_HEADER.len()])
+        .max()
+        .unwrap_or_default();
+    let files_width = FILES_HEADER.len().max(total_files.to_string().len());
 
-    vec![format!(
-        "Skipped {total_files} file(s) with no local project: {}. {MAPPING_REMEDY} \
-         A line per file: config --warn-each-skipped-file true.",
-        project_list.join(", ")
-    )]
+    let mut lines = vec![
+        format!("Skipped {total_files} file(s) with no local project:"),
+        format!("  {PROJECT_HEADER:<project_width$}  {FILES_HEADER:>files_width$}"),
+    ];
+    for (project, files) in skipped {
+        lines.push(format!(
+            "  {project:<project_width$}  {:>files_width$}",
+            files.len()
+        ));
+    }
+    lines.push(MAPPING_REMEDY.to_string());
+    lines.push(
+        "A line per file: claude-code-sync config --warn-each-skipped-file true.".to_string(),
+    );
+
+    vec![lines.join("\n")]
 }
 
 fn is_encoded_project_path(name: &str) -> bool {
@@ -493,8 +511,8 @@ mod tests {
             "one warning, however many files were missed"
         );
         assert!(lines[0].contains("Skipped 3 file(s)"));
-        assert!(lines[0].contains("blog (1)"));
-        assert!(lines[0].contains("shop (2)"));
+        assert!(has_row(&lines[0], "blog", "1"));
+        assert!(has_row(&lines[0], "shop", "2"));
         assert!(
             lines[0].contains("--map-project"),
             "the remedy stays visible"
@@ -534,7 +552,13 @@ mod tests {
 
         assert_eq!(lines.len(), 1);
         assert!(lines[0].contains("Skipped 2 file(s)"));
-        assert!(lines[0].contains("shop (2)"), "named once, counted twice");
+        assert!(has_row(&lines[0], "shop", "2"), "named once, counted twice");
+    }
+
+    fn has_row(table: &str, project: &str, files: &str) -> bool {
+        table
+            .lines()
+            .any(|row| row.split_whitespace().eq([project, files]))
     }
 
     #[test]
