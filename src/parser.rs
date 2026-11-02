@@ -263,6 +263,12 @@ impl std::io::Write for ContentHasher {
     }
 }
 
+pub(crate) fn get_parser_source_hash() -> String {
+    let mut hasher = ContentHasher::new();
+    hasher.write_bytes(include_bytes!("parser.rs"));
+    hasher.finish()
+}
+
 fn hash_entry(entry: &ConversationEntry, hasher: &mut ContentHasher) {
     let serialized = serde_json::to_writer(&mut *hasher, entry);
     hasher.write_bytes(&[ENTRY_TERMINATOR]);

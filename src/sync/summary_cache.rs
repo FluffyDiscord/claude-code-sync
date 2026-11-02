@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
 use crate::config::ConfigManager;
-use crate::parser::ConversationSession;
+use crate::parser::{get_parser_source_hash, ConversationSession};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct CachedSummary {
@@ -18,7 +18,7 @@ pub(crate) struct CachedSummary {
 
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub(crate) struct SummaryCache {
-    version: String,
+    parser_source_hash: String,
     entries: HashMap<PathBuf, CachedSummary>,
 }
 
@@ -32,7 +32,8 @@ impl SummaryCache {
             }
         };
 
-        if cache.version != env!("CARGO_PKG_VERSION") {
+        let current_parser_source_hash = get_parser_source_hash();
+        if cache.parser_source_hash != current_parser_source_hash {
             return Self::default();
         }
 
@@ -82,7 +83,7 @@ impl SummaryCache {
             }
         }
 
-        self.version = env!("CARGO_PKG_VERSION").to_string();
+        self.parser_source_hash = get_parser_source_hash();
         if let Err(error) = self.write() {
             log::warn!("Failed to save the transcript summary cache: {error:#}");
         }
