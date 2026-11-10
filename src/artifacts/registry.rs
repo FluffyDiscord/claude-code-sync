@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::path::Path;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -46,8 +47,40 @@ pub struct CategoryDescriptor {
     pub dest: DestRoot,
     pub exclude_extensions: &'static [&'static str],
     pub tokenize_paths: bool,
-    pub mirror_deletes: bool,
+    pub mirror_deletes: DeletionMirroring,
     pub description: &'static str,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DeletionMirroring {
+    Never,
+    EveryFile,
+    ProjectMemoryOnly,
+}
+
+const PROJECT_MEMORY_DIR: &str = "memory";
+
+impl CategoryDescriptor {
+    pub fn mirrors_deletions(&self) -> bool {
+        self.mirror_deletes != DeletionMirroring::Never
+    }
+
+    pub fn mirrors_deletion_of(&self, category_relative: &Path) -> bool {
+        match self.mirror_deletes {
+            DeletionMirroring::Never => false,
+            DeletionMirroring::EveryFile => true,
+            DeletionMirroring::ProjectMemoryOnly => is_project_memory(category_relative),
+        }
+    }
+}
+
+fn is_project_memory(category_relative: &Path) -> bool {
+    let mut parts = category_relative.components().skip(1);
+    let in_memory_dir = parts
+        .next()
+        .is_some_and(|part| part.as_os_str() == PROJECT_MEMORY_DIR);
+    let names_a_file = parts.next().is_some();
+    in_memory_dir && names_a_file
 }
 
 pub const ARTIFACTS_SUBDIR: &str = "artifacts";
@@ -62,7 +95,7 @@ pub static REGISTRY: &[CategoryDescriptor] = &[
         dest: DestRoot::Artifacts,
         exclude_extensions: &[],
         tokenize_paths: true,
-        mirror_deletes: false,
+        mirror_deletes: DeletionMirroring::Never,
         description: "User settings and keybindings (never settings.local.json)",
     },
     CategoryDescriptor {
@@ -74,7 +107,7 @@ pub static REGISTRY: &[CategoryDescriptor] = &[
         dest: DestRoot::Artifacts,
         exclude_extensions: &[],
         tokenize_paths: false,
-        mirror_deletes: false,
+        mirror_deletes: DeletionMirroring::Never,
         description: "Global CLAUDE.md user memory",
     },
     CategoryDescriptor {
@@ -86,7 +119,7 @@ pub static REGISTRY: &[CategoryDescriptor] = &[
         dest: DestRoot::Artifacts,
         exclude_extensions: &[],
         tokenize_paths: false,
-        mirror_deletes: true,
+        mirror_deletes: DeletionMirroring::EveryFile,
         description: "Custom skills",
     },
     CategoryDescriptor {
@@ -98,7 +131,7 @@ pub static REGISTRY: &[CategoryDescriptor] = &[
         dest: DestRoot::Artifacts,
         exclude_extensions: &[],
         tokenize_paths: false,
-        mirror_deletes: true,
+        mirror_deletes: DeletionMirroring::EveryFile,
         description: "Custom subagent definitions",
     },
     CategoryDescriptor {
@@ -110,7 +143,7 @@ pub static REGISTRY: &[CategoryDescriptor] = &[
         dest: DestRoot::Artifacts,
         exclude_extensions: &[],
         tokenize_paths: false,
-        mirror_deletes: true,
+        mirror_deletes: DeletionMirroring::EveryFile,
         description: "Custom slash commands",
     },
     CategoryDescriptor {
@@ -122,7 +155,7 @@ pub static REGISTRY: &[CategoryDescriptor] = &[
         dest: DestRoot::Artifacts,
         exclude_extensions: &[],
         tokenize_paths: false,
-        mirror_deletes: true,
+        mirror_deletes: DeletionMirroring::EveryFile,
         description: "Shared rule files projects import from ~/.claude/rules",
     },
     CategoryDescriptor {
@@ -134,7 +167,7 @@ pub static REGISTRY: &[CategoryDescriptor] = &[
         dest: DestRoot::Artifacts,
         exclude_extensions: &[],
         tokenize_paths: false,
-        mirror_deletes: true,
+        mirror_deletes: DeletionMirroring::EveryFile,
         description: "Hook scripts settings.json points at (they run automatically)",
     },
     CategoryDescriptor {
@@ -149,7 +182,7 @@ pub static REGISTRY: &[CategoryDescriptor] = &[
         dest: DestRoot::Artifacts,
         exclude_extensions: &[],
         tokenize_paths: true,
-        mirror_deletes: false,
+        mirror_deletes: DeletionMirroring::Never,
         description: "Installed-plugin and marketplace manifests (never plugin caches)",
     },
     CategoryDescriptor {
@@ -161,7 +194,7 @@ pub static REGISTRY: &[CategoryDescriptor] = &[
         dest: DestRoot::Artifacts,
         exclude_extensions: &[],
         tokenize_paths: false,
-        mirror_deletes: false,
+        mirror_deletes: DeletionMirroring::Never,
         description: "Plan-mode documents (may contain sensitive prose)",
     },
     CategoryDescriptor {
@@ -173,7 +206,7 @@ pub static REGISTRY: &[CategoryDescriptor] = &[
         dest: DestRoot::Artifacts,
         exclude_extensions: &[],
         tokenize_paths: false,
-        mirror_deletes: false,
+        mirror_deletes: DeletionMirroring::Never,
         description: "Session task lists (changes frequently)",
     },
     CategoryDescriptor {
@@ -185,7 +218,7 @@ pub static REGISTRY: &[CategoryDescriptor] = &[
         dest: DestRoot::SessionTree,
         exclude_extensions: &["jsonl"],
         tokenize_paths: false,
-        mirror_deletes: false,
+        mirror_deletes: DeletionMirroring::ProjectMemoryOnly,
         description: "Non-transcript files in project dirs (images, PDFs, project memory)",
     },
     CategoryDescriptor {
@@ -197,7 +230,7 @@ pub static REGISTRY: &[CategoryDescriptor] = &[
         dest: DestRoot::Artifacts,
         exclude_extensions: &[],
         tokenize_paths: false,
-        mirror_deletes: false,
+        mirror_deletes: DeletionMirroring::Never,
         description: "Cross-project prompt history (union-merged, grow-only)",
     },
 ];
@@ -372,16 +405,18 @@ mod tests {
 
     #[test]
     fn test_only_curated_directories_mirror_deletions() {
+        let mirrors_every_file =
+            |d: &&CategoryDescriptor| d.mirror_deletes == DeletionMirroring::EveryFile;
         let mirrored: HashSet<_> = REGISTRY
             .iter()
-            .filter(|d| d.mirror_deletes)
+            .filter(mirrors_every_file)
             .map(|d| d.name)
             .collect();
         assert_eq!(
             mirrored,
             HashSet::from(["skills", "agents", "commands", "rules", "hooks"])
         );
-        for d in REGISTRY.iter().filter(|d| d.mirror_deletes) {
+        for d in REGISTRY.iter().filter(mirrors_every_file) {
             assert!(
                 matches!(d.source, SourceSpec::Dir(_)),
                 "{} mirrors deletions, so its source must be a directory",

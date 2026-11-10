@@ -6,7 +6,9 @@ use std::path::{Path, PathBuf};
 use crate::filter::FilterConfig;
 
 use super::denylist::{is_denied, is_unsafe_rel_path};
-use super::memory_index::{is_memory_index, merge_memory_index};
+use super::memory_index::{
+    drop_entries_without_file, is_memory_index, merge_memory_index, MEMORY_INDEX_FILE,
+};
 use super::registry::{
     CategoryDescriptor, CategoryId, DestRoot, MergeStrategy, SourceSpec, ARTIFACTS_SUBDIR, REGISTRY,
 };
@@ -328,25 +330,56 @@ pub fn push_artifacts(
 ) -> Result<ArtifactReport> {
     let mut report = ArtifactReport::default();
     let tokens = PathTokens::for_claude_dir(claude_dir);
-    let tracked_before = tracked::load(claude_dir, repo_root);
+    let tracked_before = load_tracked(claude_dir, repo_root, filter);
     let mut tracked_now = TrackedPaths::new();
 
     for desc in active_categories(filter) {
         let mut counts = CategoryCounts::new(desc.id);
 
         let mut held_back = Vec::new();
-        let files = collect(
+        let mut files = collect(
             desc,
             claude_dir,
             filter,
             &mut counts.skipped,
             &mut held_back,
         )?;
+        files.sort_by_key(|file| is_memory_index(&file.rel));
         let category_root = category_repo_root(desc, repo_root, filter);
-        let mut pushed: TrackedPaths = TrackedPaths::new();
-        for rel in held_back {
-            if let Some(rel) = repo_relative(repo_root, &category_root.join(rel)) {
-                pushed.insert(rel);
+
+        if desc.mirrors_deletions() {
+            let mut pushed: TrackedPaths = held_back
+                .iter()
+                .chain(files.iter().map(|file| &file.rel))
+                .filter(|rel| desc.mirrors_deletion_of(rel))
+                .filter_map(|rel| repo_relative(repo_root, &category_root.join(rel)))
+                .collect();
+            if source_is_present(desc, claude_dir) {
+                if desc.dest == DestRoot::Artifacts {
+                    mark_category_synced(&category_root)?;
+                }
+                pushed.extend(tracked_in_projects_missing_here(
+                    desc,
+                    claude_dir,
+                    filter,
+                    &tracked_before,
+                    &category_root,
+                    repo_root,
+                ));
+                let removed =
+                    remove_from_repo(&tracked_before, &pushed, &category_root, repo_root)?;
+                counts.deleted += removed.len();
+                for path in &removed {
+                    report.record(desc.id, ArtifactChangeKind::Deleted, path);
+                }
+                tracked_now.extend(pushed);
+            } else {
+                log::info!(
+                    "Category {} is not present under {}; its repo copy is left untouched",
+                    desc.name,
+                    claude_dir.display()
+                );
+                tracked_now.extend(tracked_under(&tracked_before, &category_root, repo_root));
             }
         }
 
@@ -394,6 +427,10 @@ pub fn push_artifacts(
                         counts.merged_entries += new_entries;
                         src_bytes = merged;
                     }
+                    if unions_index {
+                        let memory_dir = dest.parent().unwrap_or(&category_root);
+                        src_bytes = drop_entries_without_file(&src_bytes, memory_dir);
+                    }
 
                     if !existed {
                         write_atomic(&dest, &src_bytes, &file.abs)?;
@@ -414,39 +451,69 @@ pub fn push_artifacts(
                     }
                 }
             }
-
-            if let Some(rel) = repo_relative(repo_root, &dest) {
-                pushed.insert(rel);
-            }
-        }
-
-        if desc.mirror_deletes {
-            if source_is_present(desc, claude_dir) {
-                mark_category_synced(&category_root)?;
-                let removed =
-                    remove_from_repo(&tracked_before, &pushed, &category_root, repo_root)?;
-                counts.deleted += removed.len();
-                for path in &removed {
-                    report.record(desc.id, ArtifactChangeKind::Deleted, path);
-                }
-                tracked_now.extend(pushed);
-            } else {
-                log::info!(
-                    "Category {} is not present under {}; its repo copy is left untouched",
-                    desc.name,
-                    claude_dir.display()
-                );
-                tracked_now.extend(tracked_under(&tracked_before, &category_root, repo_root));
-            }
         }
 
         report.counts.push(counts);
     }
 
-    if active_categories(filter).any(|desc| desc.mirror_deletes) {
+    if active_categories(filter).any(|desc| desc.mirrors_deletions()) {
         tracked::save(claude_dir, repo_root, tracked_now)?;
     }
     Ok(report)
+}
+
+fn load_tracked(claude_dir: &Path, repo_root: &Path, filter: &FilterConfig) -> TrackedPaths {
+    let mut tracked = tracked::load(claude_dir, repo_root);
+    let synced_hashes = tracked::load_synced_hashes(claude_dir, repo_root);
+    for desc in active_categories(filter).filter(|desc| desc.mirrors_deletions()) {
+        let category_root = category_repo_root(desc, repo_root, filter);
+        let category_prefix = repo_relative(repo_root, &category_root).unwrap_or_default();
+        for key in synced_hashes.keys() {
+            let Ok(rel) = Path::new(key).strip_prefix(&category_prefix) else {
+                continue;
+            };
+            if desc.mirrors_deletion_of(rel) {
+                tracked.insert(key.clone());
+            }
+        }
+    }
+    tracked
+}
+
+fn tracked_in_projects_missing_here(
+    desc: &CategoryDescriptor,
+    claude_dir: &Path,
+    filter: &FilterConfig,
+    tracked: &TrackedPaths,
+    category_root: &Path,
+    repo_root: &Path,
+) -> Vec<String> {
+    let SourceSpec::Dir(dir) = desc.source else {
+        return Vec::new();
+    };
+    if desc.dest != DestRoot::SessionTree {
+        return Vec::new();
+    }
+    let projects_dir = claude_dir.join(dir);
+    let category_prefix = repo_relative(repo_root, category_root).unwrap_or_default();
+    tracked_under(tracked, category_root, repo_root)
+        .into_iter()
+        .filter(|key| {
+            let rel = Path::new(key)
+                .strip_prefix(&category_prefix)
+                .unwrap_or(Path::new(key));
+            !project_is_synced_here(filter, &projects_dir, rel)
+        })
+        .collect()
+}
+
+fn project_is_synced_here(filter: &FilterConfig, projects_dir: &Path, rel: &Path) -> bool {
+    let Some((project, _)) = crate::project_map::split_project_path(rel) else {
+        return false;
+    };
+    let project_is_synced = crate::project_map::is_synced(filter, project);
+    let local_project = crate::project_map::local_project_dir(filter, projects_dir, project);
+    project_is_synced && local_project.is_some_and(|dir| dir.is_dir())
 }
 
 pub const CATEGORY_MARKER: &str = ".synced";
@@ -566,7 +633,32 @@ impl PullPlan {
             .chain(self.unions.iter())
             .map(|w| w.local_path.clone())
             .chain(self.deletes.iter().map(|d| d.local_path.clone()))
+            .chain(
+                self.indexes_beside_deletes()
+                    .filter(|index| index.is_file()),
+            )
             .chain(record.is_file().then_some(record))
+            .collect()
+    }
+
+    fn indexes_beside_deletes(&self) -> impl Iterator<Item = PathBuf> + '_ {
+        self.deletes
+            .iter()
+            .filter(|delete| descriptor(delete.category).merge == MergeStrategy::UnionMemoryIndex)
+            .filter_map(|delete| delete.local_path.parent())
+            .map(|dir| dir.join(MEMORY_INDEX_FILE))
+    }
+
+    fn memory_indexes_to_prune(&self) -> std::collections::BTreeSet<PathBuf> {
+        let written_indexes = self
+            .unions
+            .iter()
+            .chain(self.creates.iter())
+            .filter(|write| descriptor(write.category).merge == MergeStrategy::UnionMemoryIndex)
+            .filter(|write| is_memory_index(&write.local_path))
+            .map(|write| write.local_path.clone());
+        written_indexes
+            .chain(self.indexes_beside_deletes())
             .collect()
     }
 
@@ -762,10 +854,10 @@ pub fn plan_pull(claude_dir: &Path, repo_root: &Path, filter: &FilterConfig) -> 
         repo_root: repo_root.to_path_buf(),
         merge_tool: filter.merge_tool.clone(),
         prefer_merge_tool: filter.prefer_merge_tool,
-        tracks_deletions: active_categories(filter).any(|desc| desc.mirror_deletes),
+        tracks_deletions: active_categories(filter).any(|desc| desc.mirrors_deletions()),
         ..Default::default()
     };
-    let tracked_before = tracked::load(claude_dir, repo_root);
+    let tracked_before = load_tracked(claude_dir, repo_root, filter);
     let synced_hashes = tracked::load_synced_hashes(claude_dir, repo_root);
 
     for desc in active_categories(filter) {
@@ -794,7 +886,8 @@ pub fn plan_pull(claude_dir: &Path, repo_root: &Path, filter: &FilterConfig) -> 
                     continue;
                 }
             };
-            if desc.mirror_deletes {
+            let mirrors_this_deletion = desc.mirrors_deletion_of(&rel);
+            if mirrors_this_deletion {
                 if let Some(tracked_path) = repo_relative(repo_root, &repo_path) {
                     present.insert(tracked_path);
                 }
@@ -809,7 +902,7 @@ pub fn plan_pull(claude_dir: &Path, repo_root: &Path, filter: &FilterConfig) -> 
             let synced_key = repo_relative(repo_root, &repo_path).unwrap_or_default();
             let last_synced_hash = synced_hashes.get(&synced_key);
             let synced_here_before = tracked_before.contains(&synced_key);
-            let may_be_deleted_here = desc.mirror_deletes
+            let may_be_deleted_here = mirrors_this_deletion
                 && last_synced_hash.is_some()
                 && !local_path.is_file()
                 && source_is_present(desc, claude_dir);
@@ -887,7 +980,7 @@ pub fn plan_pull(claude_dir: &Path, repo_root: &Path, filter: &FilterConfig) -> 
             }
         }
 
-        if !desc.mirror_deletes {
+        if !desc.mirrors_deletions() {
             continue;
         }
 
@@ -902,8 +995,19 @@ pub fn plan_pull(claude_dir: &Path, repo_root: &Path, filter: &FilterConfig) -> 
             continue;
         }
 
+        let not_synced_here = tracked_in_projects_missing_here(
+            desc,
+            claude_dir,
+            filter,
+            &tracked_before,
+            &category_root,
+            repo_root,
+        );
+        plan.tracked_after.extend(not_synced_here.iter().cloned());
+
         for gone in tracked_under(&tracked_before, &category_root, repo_root) {
-            if present.contains(&gone) {
+            let left_alone = present.contains(&gone) || not_synced_here.contains(&gone);
+            if left_alone {
                 continue;
             }
             let rel = Path::new(&gone)
@@ -1106,6 +1210,17 @@ pub fn apply_pull(plan: &PullPlan, interactive: bool) -> Result<ArtifactReport> 
             ArtifactChangeKind::Deleted,
             &delete.category_path,
         );
+    }
+
+    for index in plan.memory_indexes_to_prune() {
+        let Ok(bytes) = fs::read(&index) else {
+            continue;
+        };
+        let memory_dir = index.parent().unwrap_or(&plan.claude_dir);
+        let pruned = drop_entries_without_file(&bytes, memory_dir);
+        if pruned != bytes {
+            write_atomic(&index, &pruned, &index)?;
+        }
     }
 
     if plan.tracks_deletions {

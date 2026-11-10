@@ -11,6 +11,7 @@ use tempfile::TempDir;
 fn all_on_filter() -> FilterConfig {
     FilterConfig {
         sync_artifacts: ArtifactToggles::all_enabled(),
+        mapped_projects_only: false,
         ..Default::default()
     }
 }
@@ -126,6 +127,67 @@ fn a_category_removed_here_entirely_is_restored_by_the_next_pull() {
     pull(b.path(), repo.path());
 
     assert_eq!(read(&b.path().join("skills/s/SKILL.md")), "v1\n");
+}
+
+const MEMORY_DIR: &str = "projects/-work-app/memory";
+const MEMORY_INDEX: &str = "- [Keep](keep.md) — stays\n- [Gone](gone.md) — deleted on A\n";
+
+fn forget_tracked_paths(claude: &Path) {
+    let record_path = claude.join(".claude-code-sync-tracked.json");
+    let mut record: serde_json::Value = serde_json::from_str(&read(&record_path)).unwrap();
+    record.as_object_mut().unwrap().remove("repos");
+    fs::write(&record_path, record.to_string()).unwrap();
+}
+
+#[test]
+fn a_project_memory_deleted_on_one_machine_stays_deleted_everywhere() {
+    let (repo, a, b) = two_machines_in_sync(&[
+        (&format!("{MEMORY_DIR}/MEMORY.md"), MEMORY_INDEX),
+        (&format!("{MEMORY_DIR}/keep.md"), "keep\n"),
+        (&format!("{MEMORY_DIR}/gone.md"), "gone\n"),
+    ]);
+    forget_tracked_paths(a.path());
+    forget_tracked_paths(b.path());
+    fs::remove_file(a.path().join(MEMORY_DIR).join("gone.md")).unwrap();
+    write(
+        &a.path().join(MEMORY_DIR).join("MEMORY.md"),
+        "- [Keep](keep.md) — stays\n",
+    );
+
+    pull(a.path(), repo.path());
+    push(a.path(), repo.path());
+    pull(b.path(), repo.path());
+    push(b.path(), repo.path());
+    pull(a.path(), repo.path());
+
+    for machine in [a.path(), b.path(), repo.path()] {
+        let memory_dir = machine.join(MEMORY_DIR);
+        assert!(
+            !memory_dir.join("gone.md").exists(),
+            "{}",
+            machine.display()
+        );
+        assert_eq!(read(&memory_dir.join("keep.md")), "keep\n");
+        assert_eq!(
+            read(&memory_dir.join("MEMORY.md")),
+            "- [Keep](keep.md) — stays\n",
+            "{}",
+            machine.display()
+        );
+    }
+}
+
+#[test]
+fn project_memory_stays_in_the_repo_when_the_project_is_missing_here() {
+    let (repo, _a, b) = two_machines_in_sync(&[(&format!("{MEMORY_DIR}/keep.md"), "keep\n")]);
+    fs::remove_dir_all(b.path().join("projects/-work-app")).unwrap();
+
+    push(b.path(), repo.path());
+
+    assert_eq!(
+        read(&repo.path().join(MEMORY_DIR).join("keep.md")),
+        "keep\n"
+    );
 }
 
 #[test]

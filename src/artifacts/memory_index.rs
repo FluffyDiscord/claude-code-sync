@@ -80,6 +80,38 @@ pub fn merge_memory_index(dest: &[u8], incoming: &[u8]) -> (Vec<u8>, usize) {
     (merged.into_bytes(), added)
 }
 
+pub fn drop_entries_without_file(index: &[u8], memory_dir: &std::path::Path) -> Vec<u8> {
+    let mut kept = String::new();
+    let mut dropped_any = false;
+    for line in parse(&String::from_utf8_lossy(index)) {
+        let text = match line {
+            IndexLine::Entry { target, text } => {
+                let file_is_gone = names_missing_sibling(&target, memory_dir);
+                if file_is_gone {
+                    dropped_any = true;
+                    continue;
+                }
+                text
+            }
+            IndexLine::Other(text) => text,
+        };
+        kept.push_str(&text);
+        kept.push('\n');
+    }
+    if !dropped_any {
+        return index.to_vec();
+    }
+    kept.into_bytes()
+}
+
+fn names_missing_sibling(target: &str, memory_dir: &std::path::Path) -> bool {
+    let is_sibling_file_name = !target.is_empty() && !target.contains(['/', '\\', ':', '#', '?']);
+    if !is_sibling_file_name {
+        return false;
+    }
+    !memory_dir.join(target).is_file()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -154,6 +186,20 @@ mod tests {
         assert!(text.contains("[z](z.md)"));
         assert!(text.contains("# Memory index"));
         assert_eq!(added, 0);
+    }
+
+    #[test]
+    fn only_entries_naming_a_missing_sibling_file_are_dropped() {
+        let memory_dir = tempfile::TempDir::new().unwrap();
+        std::fs::write(memory_dir.path().join("a.md"), "a").unwrap();
+        let index = b"# Index\n- [a](a.md) kept\n- [gone](gone.md) dropped\n- [web](https://x.y/z.md) kept\n";
+
+        let pruned = drop_entries_without_file(index, memory_dir.path());
+
+        assert_eq!(
+            String::from_utf8(pruned).unwrap(),
+            "# Index\n- [a](a.md) kept\n- [web](https://x.y/z.md) kept\n"
+        );
     }
 
     #[test]
