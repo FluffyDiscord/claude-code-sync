@@ -80,7 +80,11 @@ fn describe(plan: &PurgePlan) {
         .cyan()
     );
     if let Some(cutoff) = plan.cutoff {
-        println!("  {} {}", "Cutoff:".bold(), cutoff.format("%Y-%m-%d"));
+        println!(
+            "  {} {}",
+            "Cutoff:".bold(),
+            crate::datetime::format_utc(cutoff, crate::datetime::DATE)
+        );
     }
     if plan.undated > 0 {
         println!(
@@ -113,7 +117,7 @@ fn describe(plan: &PurgePlan) {
             "    {} {} — last active {} ({} days)",
             "-".dimmed(),
             target.session_id,
-            target.last_activity.format("%Y-%m-%d"),
+            crate::datetime::format_utc(target.last_activity, crate::datetime::DATE),
             target.age_days
         );
     }

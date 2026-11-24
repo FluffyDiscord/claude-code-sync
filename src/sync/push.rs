@@ -70,9 +70,7 @@ fn compute_relative_path(
 }
 
 fn is_later(candidate: Option<&str>, reference: Option<&str>) -> bool {
-    let parse = |timestamp: Option<&str>| {
-        timestamp.and_then(|value| chrono::DateTime::parse_from_rfc3339(value).ok())
-    };
+    let parse = |timestamp: Option<&str>| timestamp.and_then(crate::datetime::parse_rfc3339);
     match (parse(candidate), parse(reference)) {
         (Some(candidate), Some(reference)) => candidate > reference,
         _ => false,
@@ -469,7 +467,10 @@ pub fn push_history_with_confirmation(
         let default_message = format!(
             "Sync {} sessions at {}",
             sessions.len(),
-            chrono::Utc::now().format("%Y-%m-%d %H:%M:%S UTC")
+            crate::datetime::format_utc(
+                time::OffsetDateTime::now_utc(),
+                crate::datetime::DATE_SECONDS_UTC
+            )
         );
         let message = commit_message.unwrap_or(&default_message);
 

@@ -91,10 +91,8 @@ fn show_snapshot_details(
         return Ok(());
     }
 
-    let mut pull_snapshots: Vec<(std::path::PathBuf, chrono::DateTime<chrono::Utc>, u64)> =
-        Vec::new();
-    let mut push_snapshots: Vec<(std::path::PathBuf, chrono::DateTime<chrono::Utc>, u64)> =
-        Vec::new();
+    let mut pull_snapshots: Vec<(std::path::PathBuf, time::OffsetDateTime, u64)> = Vec::new();
+    let mut push_snapshots: Vec<(std::path::PathBuf, time::OffsetDateTime, u64)> = Vec::new();
 
     for entry in fs::read_dir(&snapshots_dir)? {
         let entry = entry?;
@@ -124,8 +122,8 @@ fn show_snapshot_details(
     pull_snapshots.sort_by_key(|s| std::cmp::Reverse(s.1));
     push_snapshots.sort_by_key(|s| std::cmp::Reverse(s.1));
 
-    let now = chrono::Utc::now();
-    let age_threshold = now - chrono::Duration::days(max_age_days);
+    let now = time::OffsetDateTime::now_utc();
+    let age_threshold = now - time::Duration::days(max_age_days);
 
     println!("{}", "Current Snapshot Inventory:".bold().cyan());
     println!("{}", "=".repeat(80).cyan());
@@ -158,8 +156,8 @@ fn show_snapshot_details(
                 "DELETE".red()
             };
 
-            let age = now.signed_duration_since(*timestamp);
-            let days = age.num_days();
+            let age = now - *timestamp;
+            let days = age.whole_days();
 
             println!(
                 "  [{}] {} - {} days old - {:.1} KB",
@@ -208,8 +206,8 @@ fn show_snapshot_details(
                 "DELETE".red()
             };
 
-            let age = now.signed_duration_since(*timestamp);
-            let days = age.num_days();
+            let age = now - *timestamp;
+            let days = age.whole_days();
 
             println!(
                 "  [{}] {} - {} days old - {:.1} KB",

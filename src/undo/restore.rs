@@ -114,8 +114,8 @@ mod tests {
     use super::*;
     use crate::history::OperationType;
     use crate::undo::test_support::{create_test_file, metadata_only_snapshot};
-    use chrono::Duration;
     use tempfile::tempdir;
+    use time::Duration;
     use uuid::Uuid;
 
     #[test]
@@ -158,7 +158,7 @@ mod tests {
         let mut malicious_snapshot = metadata_only_snapshot(
             &Uuid::new_v4().to_string(),
             OperationType::Pull,
-            Duration::zero(),
+            Duration::ZERO,
         );
 
         let home = dirs::home_dir().unwrap();
@@ -202,7 +202,7 @@ mod tests {
         let mut snapshot = metadata_only_snapshot(
             &Uuid::new_v4().to_string(),
             OperationType::Pull,
-            Duration::zero(),
+            Duration::ZERO,
         );
         snapshot.files.insert(
             outside.to_string_lossy().to_string(),
@@ -235,7 +235,7 @@ mod tests {
         let mut snapshot = metadata_only_snapshot(
             &Uuid::new_v4().to_string(),
             OperationType::Pull,
-            Duration::zero(),
+            Duration::ZERO,
         );
         snapshot
             .deleted_files
@@ -260,7 +260,7 @@ mod tests {
         let mut snapshot = metadata_only_snapshot(
             &Uuid::new_v4().to_string(),
             OperationType::Pull,
-            Duration::zero(),
+            Duration::ZERO,
         );
         snapshot
             .deleted_files
@@ -295,7 +295,7 @@ mod tests {
         let mut snapshot = metadata_only_snapshot(
             &Uuid::new_v4().to_string(),
             OperationType::Pull,
-            Duration::zero(),
+            Duration::ZERO,
         );
         snapshot
             .files
@@ -328,7 +328,7 @@ mod tests {
         let mut snapshot = metadata_only_snapshot(
             &Uuid::new_v4().to_string(),
             OperationType::Pull,
-            Duration::zero(),
+            Duration::ZERO,
         );
         snapshot
             .files

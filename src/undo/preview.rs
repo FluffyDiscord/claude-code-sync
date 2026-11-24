@@ -7,12 +7,12 @@ use crate::history::{OperationHistory, OperationType};
 #[derive(Debug)]
 pub struct UndoPreview {
     pub operation_type: OperationType,
-    pub operation_timestamp: chrono::DateTime<chrono::Utc>,
+    pub operation_timestamp: time::OffsetDateTime,
     pub branch: Option<String>,
     pub affected_files: Vec<String>,
     pub conversation_count: usize,
     pub commit_hash: Option<String>,
-    pub snapshot_timestamp: Option<chrono::DateTime<chrono::Utc>>,
+    pub snapshot_timestamp: Option<time::OffsetDateTime>,
     pub files_to_delete: Vec<String>,
     pub files_changed_since_pull: Vec<String>,
 }
@@ -86,10 +86,11 @@ impl UndoPreview {
                 println!(
                     "{} {}",
                     "Performed:".bold(),
-                    self.operation_timestamp
-                        .format("%Y-%m-%d %H:%M:%S UTC")
-                        .to_string()
-                        .cyan()
+                    crate::datetime::format_utc(
+                        self.operation_timestamp,
+                        crate::datetime::DATE_SECONDS_UTC
+                    )
+                    .cyan()
                 );
 
                 if let Some(branch) = &self.branch {
@@ -131,9 +132,7 @@ impl UndoPreview {
                     println!(
                         "\n{} {}",
                         "Snapshot taken:".bold(),
-                        snapshot_ts
-                            .format("%Y-%m-%d %H:%M:%S UTC")
-                            .to_string()
+                        crate::datetime::format_utc(snapshot_ts, crate::datetime::DATE_SECONDS_UTC)
                             .dimmed()
                     );
                 }
@@ -155,10 +154,11 @@ impl UndoPreview {
                 println!(
                     "{} {}",
                     "Performed at:".bold(),
-                    self.operation_timestamp
-                        .format("%Y-%m-%d %H:%M:%S UTC")
-                        .to_string()
-                        .cyan()
+                    crate::datetime::format_utc(
+                        self.operation_timestamp,
+                        crate::datetime::DATE_SECONDS_UTC
+                    )
+                    .cyan()
                 );
 
                 if let Some(branch) = &self.branch {
@@ -215,16 +215,14 @@ impl UndoPreview {
                     println!(
                         "\n{} {}",
                         "Snapshot created:".bold(),
-                        snapshot_ts
-                            .format("%Y-%m-%d %H:%M:%S UTC")
-                            .to_string()
+                        crate::datetime::format_utc(snapshot_ts, crate::datetime::DATE_SECONDS_UTC)
                             .cyan()
                     );
 
-                    let time_diff = chrono::Utc::now().signed_duration_since(snapshot_ts);
-                    let days = time_diff.num_days();
-                    let hours = time_diff.num_hours() % 24;
-                    let mins = time_diff.num_minutes() % 60;
+                    let time_diff = time::OffsetDateTime::now_utc() - snapshot_ts;
+                    let days = time_diff.whole_days();
+                    let hours = time_diff.whole_hours() % 24;
+                    let mins = time_diff.whole_minutes() % 60;
                     println!(
                         "  {} {} days, {} hours, {} minutes ago",
                         "Age:".dimmed(),

@@ -67,7 +67,7 @@ pub fn undo_pull(history_path: Option<PathBuf>, allowed_base_dir: Option<&Path>)
         restored_count,
         removed_count,
         kept_count,
-        snapshot.timestamp.format("%Y-%m-%d %H:%M:%S UTC")
+        crate::datetime::format_utc(snapshot.timestamp, crate::datetime::DATE_SECONDS_UTC)
     ))
 }
 
@@ -142,7 +142,7 @@ pub fn undo_push(repo_path: &Path, history_path: Option<PathBuf>) -> Result<Stri
         Operation was at: {}",
         short_commit,
         branch_name,
-        last_push.timestamp.format("%Y-%m-%d %H:%M:%S UTC")
+        crate::datetime::format_utc(last_push.timestamp, crate::datetime::DATE_SECONDS_UTC)
     );
 
     if needs_force_push {
@@ -164,8 +164,8 @@ mod tests {
         create_test_file, metadata_only_snapshot, operation_count, operation_types,
         setup_test_repo, HistoryBuilder,
     };
-    use chrono::Duration;
     use tempfile::tempdir;
+    use time::Duration;
     use uuid::Uuid;
 
     #[test]
@@ -278,7 +278,7 @@ mod tests {
         let mut snapshot = metadata_only_snapshot(
             &Uuid::new_v4().to_string(),
             OperationType::Push,
-            Duration::zero(),
+            Duration::ZERO,
         );
         snapshot.branch = Some("main".to_string());
         let snapshot_path = snapshot.save_to_disk(Some(&snapshots_dir)).unwrap();
@@ -406,7 +406,7 @@ mod tests {
         let mut snapshot = metadata_only_snapshot(
             &Uuid::new_v4().to_string(),
             OperationType::Push,
-            Duration::zero(),
+            Duration::ZERO,
         );
         snapshot.git_commit_hash = Some("0123456789abcdef0123456789abcdef01234567".to_string());
         let snapshot_path = snapshot.save_to_disk(Some(&snapshots_dir)).unwrap();

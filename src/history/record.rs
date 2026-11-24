@@ -1,6 +1,6 @@
-use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
+use time::OffsetDateTime;
 
 use super::summary::ConversationSummary;
 use super::types::{OperationType, SyncOperation};
@@ -9,7 +9,8 @@ use super::types::{OperationType, SyncOperation};
 pub struct OperationRecord {
     pub operation_type: OperationType,
 
-    pub timestamp: DateTime<Utc>,
+    #[serde(with = "time::serde::rfc3339")]
+    pub timestamp: OffsetDateTime,
 
     #[serde(skip_serializing_if = "Option::is_none")]
     pub branch: Option<String>,
@@ -34,7 +35,7 @@ impl OperationRecord {
     ) -> Self {
         Self {
             operation_type,
-            timestamp: Utc::now(),
+            timestamp: OffsetDateTime::now_utc(),
             branch,
             affected_conversations,
             snapshot_path: None,
@@ -65,6 +66,30 @@ mod tests {
         }"#;
         let record: OperationRecord = serde_json::from_str(old_json).unwrap();
         assert!(record.artifact_counts.is_empty());
+    }
+
+    #[test]
+    fn test_record_written_by_chrono_keeps_its_timestamp() {
+        let written_by_0_5_6 = r#"{
+            "operation_type": "push",
+            "timestamp": "2026-11-24T20:54:33.239978500Z",
+            "affected_conversations": []
+        }"#;
+        let with_offset =
+            written_by_0_5_6.replace("20:54:33.239978500Z", "21:54:33.239978500+01:00");
+
+        let record: OperationRecord = serde_json::from_str(written_by_0_5_6).unwrap();
+        let offset_record: OperationRecord = serde_json::from_str(&with_offset).unwrap();
+
+        assert_eq!(
+            record.timestamp.unix_timestamp_nanos(),
+            1_795_553_673_239_978_500
+        );
+        assert_eq!(
+            crate::datetime::format_utc(record.timestamp, crate::datetime::DATE_SECONDS_UTC),
+            "2026-11-24 20:54:33 UTC"
+        );
+        assert_eq!(offset_record.timestamp, record.timestamp);
     }
 
     #[test]

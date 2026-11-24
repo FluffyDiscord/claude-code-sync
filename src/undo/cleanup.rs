@@ -36,8 +36,8 @@ pub fn cleanup_old_snapshots_with_dir(
         return Ok(0);
     }
 
-    let mut pull_snapshots: Vec<(std::path::PathBuf, chrono::DateTime<chrono::Utc>)> = Vec::new();
-    let mut push_snapshots: Vec<(std::path::PathBuf, chrono::DateTime<chrono::Utc>)> = Vec::new();
+    let mut pull_snapshots: Vec<(std::path::PathBuf, time::OffsetDateTime)> = Vec::new();
+    let mut push_snapshots: Vec<(std::path::PathBuf, time::OffsetDateTime)> = Vec::new();
 
     for entry in fs::read_dir(&snapshots_dir)? {
         let entry = entry?;
@@ -60,8 +60,8 @@ pub fn cleanup_old_snapshots_with_dir(
     pull_snapshots.sort_by_key(|s| std::cmp::Reverse(s.1));
     push_snapshots.sort_by_key(|s| std::cmp::Reverse(s.1));
 
-    let now = chrono::Utc::now();
-    let age_threshold = now - chrono::Duration::days(config.max_age_days);
+    let now = time::OffsetDateTime::now_utc();
+    let age_threshold = now - time::Duration::days(config.max_age_days);
 
     let mut to_delete = Vec::new();
 
@@ -112,8 +112,8 @@ pub fn cleanup_old_snapshots(
 mod tests {
     use super::*;
     use crate::undo::test_support::metadata_only_snapshot;
-    use chrono::Duration;
     use tempfile::tempdir;
+    use time::Duration;
 
     fn snapshots_aged_by_day(dir: &Path, count: i64, operation_type: OperationType) {
         fs::create_dir_all(dir).unwrap();

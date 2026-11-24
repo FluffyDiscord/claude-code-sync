@@ -231,7 +231,9 @@ fn push_transcript_from_another_machine(repo: &Path) {
 }
 
 fn write_transcript(machine: &Machine, content: &str) -> PathBuf {
-    let path = machine.claude().join(PULLED_TRANSCRIPT);
+    let path = PULLED_TRANSCRIPT
+        .split('/')
+        .fold(machine.claude(), |path, part| path.join(part));
     fs::create_dir_all(path.parent().unwrap()).unwrap();
     fs::write(&path, content).unwrap();
     path
@@ -469,7 +471,7 @@ fn test_push_sends_every_transcript_while_pull_takes_only_mapped_projects() {
     seed_full_claude_home(&machine_a.claude());
     let own_unmapped = format!(
         "projects/{}-other",
-        claude_code_sync::project_map::encode_project_path(&machine_a.home)
+        claude_code_sync::project_map::encode_project_path(&dirs::home_dir().unwrap())
     );
     let unmapped = machine_a.claude().join(&own_unmapped);
     fs::create_dir_all(unmapped.join("memory")).unwrap();

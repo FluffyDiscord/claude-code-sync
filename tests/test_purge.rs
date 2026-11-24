@@ -3,9 +3,10 @@ use std::path::{Path, PathBuf};
 
 use claude_code_sync::purge::{self, DEFAULT_RETENTION_DAYS};
 use tempfile::TempDir;
+use time::format_description::well_known::Rfc3339;
 
 fn transcript(projects_dir: &Path, project: &str, session: &str, age_days: i64) -> PathBuf {
-    let last_message = chrono::Utc::now() - chrono::Duration::days(age_days);
+    let last_message = time::OffsetDateTime::now_utc() - time::Duration::days(age_days);
     write_transcript(
         projects_dir,
         project,
@@ -13,7 +14,7 @@ fn transcript(projects_dir: &Path, project: &str, session: &str, age_days: i64) 
         &format!(
             "{{\"type\":\"user\",\"uuid\":\"u1\",\"sessionId\":\"{session}\",\
              \"cwd\":\"/home/user/app\",\"timestamp\":\"{}\"}}\n",
-            last_message.to_rfc3339()
+            last_message.format(&Rfc3339).unwrap()
         ),
     )
 }
@@ -132,13 +133,13 @@ fn a_subagent_transcript_never_ages_out_on_its_own() {
     let session_dir = parent.parent().unwrap().join("parent");
     fs::create_dir_all(session_dir.join("subagents")).unwrap();
     let subagent = session_dir.join("subagents/agent.jsonl");
-    let long_ago = chrono::Utc::now() - chrono::Duration::days(400);
+    let long_ago = time::OffsetDateTime::now_utc() - time::Duration::days(400);
     fs::write(
         &subagent,
         format!(
             "{{\"type\":\"user\",\"uuid\":\"u9\",\"sessionId\":\"agent\",\
              \"timestamp\":\"{}\"}}\n",
-            long_ago.to_rfc3339()
+            long_ago.format(&Rfc3339).unwrap()
         ),
     )
     .unwrap();

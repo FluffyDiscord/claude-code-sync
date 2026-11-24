@@ -311,7 +311,10 @@ pub fn save_new_remote_copy(
         return Ok(None);
     }
 
-    let timestamp = chrono::Utc::now().format("%Y%m%d-%H%M%S");
+    let timestamp = crate::datetime::format_utc(
+        time::OffsetDateTime::now_utc(),
+        time::macros::format_description!("[year][month][day]-[hour][minute][second]"),
+    );
     let conflict_suffix = format!("{CONFLICT_SUFFIX_PREFIX}{timestamp}");
     let renamed_path = conflict.clone().resolve_keep_both(&conflict_suffix)?;
 

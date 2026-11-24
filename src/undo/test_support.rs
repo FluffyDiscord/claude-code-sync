@@ -4,8 +4,8 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use chrono::Duration;
 use tempfile::{tempdir, TempDir};
+use time::Duration;
 
 use super::Snapshot;
 use crate::git::GitRepo;
@@ -38,7 +38,7 @@ pub(super) fn metadata_only_snapshot(
 ) -> Snapshot {
     Snapshot {
         snapshot_id: id.to_string(),
-        timestamp: chrono::Utc::now() - age,
+        timestamp: time::OffsetDateTime::now_utc() - age,
         operation_type,
         git_commit_hash: None,
         files: HashMap::new(),

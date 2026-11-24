@@ -20,9 +20,9 @@ fn line_timestamp(line: &str) -> Option<i64> {
     let value: Value = serde_json::from_str(line).ok()?;
     match value.get("timestamp")? {
         Value::Number(n) => n.as_i64(),
-        Value::String(s) => chrono::DateTime::parse_from_rfc3339(s)
-            .ok()
-            .map(|dt| dt.timestamp_millis()),
+        Value::String(s) => {
+            crate::datetime::parse_rfc3339(s).map(crate::datetime::unix_milliseconds)
+        }
         _ => None,
     }
 }

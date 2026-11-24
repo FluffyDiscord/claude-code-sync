@@ -11,6 +11,8 @@ pub mod config;
 
 pub mod conflict;
 
+pub mod datetime;
+
 pub mod interactive_conflict;
 
 pub mod filter;

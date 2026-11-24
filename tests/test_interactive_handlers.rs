@@ -24,7 +24,7 @@ fn test_verbosity_level_copy() {
 fn test_undo_preview_display_quiet() {
     let preview = UndoPreview {
         operation_type: OperationType::Pull,
-        operation_timestamp: chrono::Utc::now(),
+        operation_timestamp: time::OffsetDateTime::now_utc(),
         branch: Some("main".to_string()),
         affected_files: vec![
             "/path/to/file1.jsonl".to_string(),
@@ -32,7 +32,7 @@ fn test_undo_preview_display_quiet() {
         ],
         conversation_count: 5,
         commit_hash: None,
-        snapshot_timestamp: Some(chrono::Utc::now()),
+        snapshot_timestamp: Some(time::OffsetDateTime::now_utc()),
         files_to_delete: Vec::new(),
         files_changed_since_pull: Vec::new(),
     };
@@ -44,12 +44,12 @@ fn test_undo_preview_display_quiet() {
 fn test_undo_preview_display_normal() {
     let preview = UndoPreview {
         operation_type: OperationType::Push,
-        operation_timestamp: chrono::Utc::now(),
+        operation_timestamp: time::OffsetDateTime::now_utc(),
         branch: Some("main".to_string()),
         affected_files: vec![],
         conversation_count: 3,
         commit_hash: Some("abc123def456".to_string()),
-        snapshot_timestamp: Some(chrono::Utc::now()),
+        snapshot_timestamp: Some(time::OffsetDateTime::now_utc()),
         files_to_delete: Vec::new(),
         files_changed_since_pull: Vec::new(),
     };
@@ -61,7 +61,7 @@ fn test_undo_preview_display_normal() {
 fn test_undo_preview_display_verbose() {
     let preview = UndoPreview {
         operation_type: OperationType::Pull,
-        operation_timestamp: chrono::Utc::now(),
+        operation_timestamp: time::OffsetDateTime::now_utc(),
         branch: None,
         affected_files: vec![
             "/path/to/file1.jsonl".to_string(),
@@ -70,7 +70,7 @@ fn test_undo_preview_display_verbose() {
         ],
         conversation_count: 10,
         commit_hash: None,
-        snapshot_timestamp: Some(chrono::Utc::now()),
+        snapshot_timestamp: Some(time::OffsetDateTime::now_utc()),
         files_to_delete: Vec::new(),
         files_changed_since_pull: Vec::new(),
     };
@@ -86,12 +86,12 @@ fn test_undo_preview_many_files_verbose() {
 
     let preview = UndoPreview {
         operation_type: OperationType::Pull,
-        operation_timestamp: chrono::Utc::now(),
+        operation_timestamp: time::OffsetDateTime::now_utc(),
         branch: Some("develop".to_string()),
         affected_files: many_files,
         conversation_count: 50,
         commit_hash: None,
-        snapshot_timestamp: Some(chrono::Utc::now()),
+        snapshot_timestamp: Some(time::OffsetDateTime::now_utc()),
         files_to_delete: Vec::new(),
         files_changed_since_pull: Vec::new(),
     };
@@ -103,12 +103,12 @@ fn test_undo_preview_many_files_verbose() {
 fn test_undo_preview_push_with_commit() {
     let preview = UndoPreview {
         operation_type: OperationType::Push,
-        operation_timestamp: chrono::Utc::now(),
+        operation_timestamp: time::OffsetDateTime::now_utc(),
         branch: Some("feature-branch".to_string()),
         affected_files: vec![],
         conversation_count: 7,
         commit_hash: Some("1234567890abcdef1234567890abcdef12345678".to_string()),
-        snapshot_timestamp: Some(chrono::Utc::now() - chrono::Duration::hours(2)),
+        snapshot_timestamp: Some(time::OffsetDateTime::now_utc() - time::Duration::hours(2)),
         files_to_delete: Vec::new(),
         files_changed_since_pull: Vec::new(),
     };
@@ -226,8 +226,8 @@ fn test_non_interactive_push_verbosity() {
 
 #[test]
 fn test_undo_preview_field_access() {
-    let timestamp = chrono::Utc::now();
-    let snapshot_time = chrono::Utc::now() - chrono::Duration::hours(1);
+    let timestamp = time::OffsetDateTime::now_utc();
+    let snapshot_time = time::OffsetDateTime::now_utc() - time::Duration::hours(1);
 
     let preview = UndoPreview {
         operation_type: OperationType::Pull,
@@ -252,12 +252,12 @@ fn test_undo_preview_field_access() {
 fn test_undo_preview_empty_files() {
     let preview = UndoPreview {
         operation_type: OperationType::Push,
-        operation_timestamp: chrono::Utc::now(),
+        operation_timestamp: time::OffsetDateTime::now_utc(),
         branch: None,
         affected_files: vec![],
         conversation_count: 0,
         commit_hash: Some("def456".to_string()),
-        snapshot_timestamp: Some(chrono::Utc::now()),
+        snapshot_timestamp: Some(time::OffsetDateTime::now_utc()),
         files_to_delete: Vec::new(),
         files_changed_since_pull: Vec::new(),
     };

@@ -1,9 +1,9 @@
 use anyhow::{bail, Context, Result};
-use chrono::{DateTime, Duration, Utc};
 use indicatif::ParallelProgressIterator;
 use rayon::prelude::*;
 use serde_json::Value;
 use std::path::{Path, PathBuf};
+use time::{Duration, OffsetDateTime};
 
 use crate::git::GitRepo;
 use crate::sync::summary_cache::SummaryCache;
@@ -17,7 +17,7 @@ pub const CLAUDE_CODE_DEFAULT_RETENTION_DAYS: u32 = 30;
 #[derive(Debug, Clone)]
 pub struct PurgeTarget {
     pub session_id: String,
-    pub last_activity: DateTime<Utc>,
+    pub last_activity: OffsetDateTime,
     pub age_days: i64,
     pub paths: Vec<PathBuf>,
     pub bytes: u64,
@@ -26,7 +26,7 @@ pub struct PurgeTarget {
 #[derive(Debug, Default)]
 pub struct PurgePlan {
     pub retention_days: u32,
-    pub cutoff: Option<DateTime<Utc>>,
+    pub cutoff: Option<OffsetDateTime>,
     pub targets: Vec<PurgeTarget>,
     pub undated: usize,
     pub unreadable: usize,
@@ -87,7 +87,7 @@ fn claude_code_retention_days(claude_dir: &Path) -> u32 {
 
 #[derive(Default)]
 struct SessionCopies {
-    last_activity: Option<DateTime<Utc>>,
+    last_activity: Option<OffsetDateTime>,
     undatable: bool,
     paths: Vec<PathBuf>,
     bytes: u64,
@@ -102,7 +102,8 @@ pub fn plan(
         retention_days,
         ..Default::default()
     };
-    let Some(cutoff) = Utc::now().checked_sub_signed(Duration::days(i64::from(retention_days)))
+    let Some(cutoff) =
+        OffsetDateTime::now_utc().checked_sub(Duration::days(i64::from(retention_days)))
     else {
         return Ok(plan);
     };
@@ -151,7 +152,7 @@ pub fn plan(
         }
     }
 
-    let now = Utc::now();
+    let now = OffsetDateTime::now_utc();
     for (session_id, copies) in by_session {
         if copies.undatable {
             plan.undated += 1;
@@ -166,7 +167,7 @@ pub fn plan(
         plan.targets.push(PurgeTarget {
             session_id,
             last_activity,
-            age_days: (now - last_activity).num_days(),
+            age_days: (now - last_activity).whole_days(),
             paths: copies.paths,
             bytes: copies.bytes,
         });
@@ -283,11 +284,9 @@ fn sidecars(transcript: &Path) -> Vec<PathBuf> {
     found
 }
 
-fn last_activity(session: &crate::parser::ConversationSession) -> Option<DateTime<Utc>> {
+fn last_activity(session: &crate::parser::ConversationSession) -> Option<OffsetDateTime> {
     let stamp = session.latest_timestamp()?;
-    DateTime::parse_from_rfc3339(stamp)
-        .ok()
-        .map(|dated| dated.with_timezone(&Utc))
+    crate::datetime::parse_rfc3339(stamp)
 }
 
 fn path_size(path: &Path) -> u64 {

@@ -16,6 +16,7 @@ Every git call shells out to the `git` CLI, so hooks, LFS and credential helpers
 | `src/merge.rs` | `SmartMerger`, the transcript merge. |
 | `src/conflict.rs` | `ConflictDetector` and the keep-both file naming. |
 | `src/interactive_conflict.rs` | The fallback for transcripts smart merge can't handle, including the keep-both copy, plus `is_interactive` and `ask_confirmation`. |
+| `src/datetime.rs` | Date-time helpers on `time`: RFC 3339 parse, "now" and the shared display formats. |
 | `src/later_timestamps.rs` | `keep_later_timestamps`: merges two files that differ only in date-times. |
 | `src/merge_tool.rs` | The per-file `remote` / `local` / `merge` / `stop` prompt and the external merge tool runner. |
 | `src/project_map.rs` | Path encoding, project ids, the sparse checkout list and the move into mapped ids. |

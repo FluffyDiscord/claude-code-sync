@@ -1,4 +1,4 @@
-use chrono::{DateTime, NaiveDateTime};
+use crate::datetime::{parse_rfc3339, unix_milliseconds};
 
 const ISO_DATE_TIME_SHAPE: &[u8] = b"dddd-dd-ddTdd:dd:dd";
 const OFFSET_SHAPE: &[u8] = b"dd:dd";
@@ -84,14 +84,12 @@ fn read_iso_date_time(text: &str) -> Option<Timestamp<'_>> {
     }
 
     let token = &text[..end];
-    let milliseconds = if has_utc_designator || has_numeric_offset {
-        DateTime::parse_from_rfc3339(token).ok()?.timestamp_millis()
+    let instant = if has_utc_designator || has_numeric_offset {
+        parse_rfc3339(token)?
     } else {
-        NaiveDateTime::parse_from_str(token, "%Y-%m-%dT%H:%M:%S%.f")
-            .ok()?
-            .and_utc()
-            .timestamp_millis()
+        parse_rfc3339(&format!("{token}Z"))?
     };
+    let milliseconds = unix_milliseconds(instant);
 
     Some(Timestamp {
         text: token,

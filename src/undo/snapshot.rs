@@ -12,7 +12,8 @@ use crate::history::OperationType;
 pub struct Snapshot {
     pub snapshot_id: String,
 
-    pub timestamp: chrono::DateTime<chrono::Utc>,
+    #[serde(with = "time::serde::rfc3339")]
+    pub timestamp: time::OffsetDateTime,
 
     pub operation_type: OperationType,
 
@@ -85,7 +86,7 @@ impl Snapshot {
         I: IntoIterator<Item = P>,
     {
         let snapshot_id = Uuid::new_v4().to_string();
-        let timestamp = chrono::Utc::now();
+        let timestamp = time::OffsetDateTime::now_utc();
         let mut files = HashMap::new();
 
         for path in file_paths {
@@ -266,6 +267,28 @@ mod tests {
     use super::*;
     use crate::undo::test_support::{create_test_file, setup_test_repo};
     use tempfile::tempdir;
+
+    #[test]
+    fn test_snapshot_written_by_chrono_keeps_its_timestamp() {
+        let written_by_0_5_6 = r#"{
+            "snapshot_id": "4f1c2a9e-0000-4000-8000-000000000000",
+            "timestamp": "2026-11-24T20:54:33.239978500Z",
+            "operation_type": "pull",
+            "files": {"/tmp/a.jsonl": "aGk="}
+        }"#;
+
+        let snapshot: Snapshot = serde_json::from_str(written_by_0_5_6).unwrap();
+
+        assert_eq!(
+            snapshot.timestamp.unix_timestamp_nanos(),
+            1_795_553_673_239_978_500
+        );
+        assert_eq!(
+            crate::datetime::format_utc(snapshot.timestamp, crate::datetime::DATE_SECONDS_UTC),
+            "2026-11-24 20:54:33 UTC"
+        );
+        assert_eq!(snapshot.files["/tmp/a.jsonl"], b"hi");
+    }
 
     #[test]
     fn test_snapshot_create_and_save() {

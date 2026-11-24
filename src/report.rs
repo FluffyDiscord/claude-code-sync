@@ -76,7 +76,7 @@ impl ConflictReport {
             .collect();
 
         ConflictReport {
-            timestamp: chrono::Utc::now().to_rfc3339(),
+            timestamp: crate::datetime::now_rfc3339(),
             total_conflicts: conflicts.len(),
             conflicts: conflict_details,
         }
@@ -205,7 +205,7 @@ pub fn load_latest_report() -> Result<ConflictReport> {
 
     if !report_path.exists() {
         return Ok(ConflictReport {
-            timestamp: chrono::Utc::now().to_rfc3339(),
+            timestamp: crate::datetime::now_rfc3339(),
             total_conflicts: 0,
             conflicts: Vec::new(),
         });

@@ -30,7 +30,7 @@ pub fn handle_history_list(limit: usize) -> Result<()> {
         println!(
             "   {} {}",
             "Time:".dimmed(),
-            op.timestamp.format("%Y-%m-%d %H:%M:%S UTC")
+            crate::datetime::format_utc(op.timestamp, crate::datetime::DATE_SECONDS_UTC)
         );
 
         if let Some(branch) = &op.branch {
@@ -107,7 +107,7 @@ pub fn handle_history_last(operation_type: Option<&str>) -> Result<()> {
     println!(
         "{} {}",
         "Time:".bold(),
-        operation.timestamp.format("%Y-%m-%d %H:%M:%S UTC")
+        crate::datetime::format_utc(operation.timestamp, crate::datetime::DATE_SECONDS_UTC)
     );
 
     if let Some(branch) = &operation.branch {
@@ -270,7 +270,8 @@ pub fn handle_history_review(limit: usize) -> Result<()> {
                 history::OperationType::Push => "PUSH".to_string(),
             };
 
-            let timestamp = op.timestamp.format("%Y-%m-%d %H:%M").to_string();
+            let timestamp =
+                crate::datetime::format_utc(op.timestamp, crate::datetime::DATE_MINUTES);
             let branch = op.branch.as_deref().unwrap_or("unknown");
             let conv_count = op.affected_conversations.len();
 
@@ -320,7 +321,10 @@ pub fn handle_history_review(limit: usize) -> Result<()> {
                         println!(
                             "{} {}",
                             "Time:".bold(),
-                            operation.timestamp.format("%Y-%m-%d %H:%M:%S UTC")
+                            crate::datetime::format_utc(
+                                operation.timestamp,
+                                crate::datetime::DATE_SECONDS_UTC
+                            )
                         );
 
                         if let Some(branch) = &operation.branch {
