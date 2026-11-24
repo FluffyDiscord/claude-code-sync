@@ -341,6 +341,39 @@ fn test_cloned_repo_flag_in_v2() -> Result<()> {
 
 #[test]
 #[serial]
+fn test_remote_set_keeps_repo_name_and_records_remote_url() -> Result<()> {
+    let env = ConfigEnv::new();
+    let repo_path = env.join("named-repo");
+    sync::init_sync_repo(&repo_path, None)?;
+
+    let mut multi_state = MultiRepoState::load()?;
+    let mut work = multi_state.repos.remove("default").unwrap();
+    work.name = "work".to_string();
+    multi_state.repos.insert("work".to_string(), work);
+    multi_state.active_repo = "work".to_string();
+    multi_state.save()?;
+
+    let url = "https://github.com/user/work.git";
+    sync::set_remote("origin", url)?;
+
+    let reloaded = MultiRepoState::load()?;
+    assert_eq!(reloaded.active_repo, "work");
+    let work = reloaded.repos.get("work").expect("repo 'work' survives");
+    assert!(work.has_remote);
+    assert_eq!(work.remote_url.as_deref(), Some(url));
+
+    sync::remove_remote("origin")?;
+
+    let reloaded = MultiRepoState::load()?;
+    let work = reloaded.repos.get("work").expect("repo 'work' survives");
+    assert!(!work.has_remote);
+    assert!(work.remote_url.is_none());
+
+    Ok(())
+}
+
+#[test]
+#[serial]
 fn test_full_workflow_with_git_repos() -> Result<()> {
     let env = ConfigEnv::new();
 

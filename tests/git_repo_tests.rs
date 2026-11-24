@@ -86,6 +86,50 @@ fn test_reset_soft() {
     assert!(temp.path().join("file2.txt").exists());
 }
 
+fn repo_pushed_to_a_bare_origin() -> (TempDir, GitRepo) {
+    let root = TempDir::new().unwrap();
+    let origin = root.path().join("origin.git");
+    fs::create_dir_all(&origin).unwrap();
+    git(&origin, &["init", "--quiet", "--bare"]);
+    let work = root.path().join("work");
+    let repo = GitRepo::init(&work).unwrap();
+    git(&work, &["symbolic-ref", "HEAD", "refs/heads/main"]);
+    git(
+        &work,
+        &["remote", "add", "origin", &origin.to_string_lossy()],
+    );
+    fs::write(work.join("a.txt"), "a").unwrap();
+    repo.stage_all().unwrap();
+    repo.commit("first").unwrap();
+    repo.push("origin", "main").unwrap();
+    (root, repo)
+}
+
+#[test]
+fn unpushed_commits_are_counted_on_the_named_branch_not_the_checked_out_one() {
+    let (root, repo) = repo_pushed_to_a_bare_origin();
+    let work = root.path().join("work");
+    git(&work, &["checkout", "--quiet", "-b", "other"]);
+    fs::write(work.join("b.txt"), "b").unwrap();
+    repo.stage_all().unwrap();
+    repo.commit("on other").unwrap();
+
+    assert!(!repo.has_unpushed_commits("origin", "main").unwrap());
+    assert!(repo.has_unpushed_commits("origin", "other").unwrap());
+}
+
+#[test]
+fn a_detached_head_has_no_branch_to_push() {
+    let (root, repo) = repo_pushed_to_a_bare_origin();
+    let work = root.path().join("work");
+    git(&work, &["checkout", "--quiet", "--detach"]);
+    fs::write(work.join("b.txt"), "b").unwrap();
+    repo.stage_all().unwrap();
+    repo.commit("detached").unwrap();
+
+    assert!(!repo.has_unpushed_commits("origin", "").unwrap());
+}
+
 fn git(dir: &std::path::Path, args: &[&str]) -> String {
     let output = std::process::Command::new("git")
         .args(["-c", "user.name=test", "-c", "user.email=test@local"])

@@ -88,6 +88,7 @@ pub fn run_init_from_config<P: AsRef<Path>>(config_path: Option<P>) -> Result<()
         exclude_older_than_days: init_config.exclude_older_than_days,
         enable_lfs: init_config.enable_lfs,
         sync_subdirectory: init_config.sync_subdirectory.clone(),
+        use_project_name_only: init_config.use_project_name_only,
         sync_artifacts: init_config.sync_artifacts.clone(),
         ..Default::default()
     };

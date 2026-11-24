@@ -97,10 +97,24 @@ pub fn plan_push(
     } else {
         Vec::new()
     };
-    let existing_map: HashMap<_, _> = existing_sessions
-        .iter()
-        .map(|s| (s.file_path.as_path(), s))
-        .collect();
+    let pending_moves = crate::project_map::pending_mapped_moves(filter, projects_dir);
+    let path_after_moves = |path: &Path| {
+        pending_moves.iter().find_map(|(encoded, id)| {
+            let rest = path.strip_prefix(projects_dir.join(encoded)).ok()?;
+            Some(projects_dir.join(id).join(rest))
+        })
+    };
+    let mut existing_map = HashMap::new();
+    for existing in &existing_sessions {
+        match path_after_moves(&existing.file_path) {
+            Some(moved) => {
+                existing_map.entry(moved).or_insert(existing);
+            }
+            None => {
+                existing_map.insert(existing.file_path.clone(), existing);
+            }
+        }
+    }
 
     let mut plan = PushPlan::default();
 
@@ -115,7 +129,7 @@ pub fn plan_push(
         };
 
         let dest_path = projects_dir.join(&relative_path);
-        let operation = if let Some(existing) = existing_map.get(dest_path.as_path()) {
+        let operation = if let Some(existing) = existing_map.get(&dest_path) {
             let is_identical = existing.content_hash() == session.content_hash();
             let repo_copy_is_later =
                 is_later(existing.latest_timestamp(), session.latest_timestamp());
@@ -141,12 +155,117 @@ pub fn plan_push(
     Ok(plan)
 }
 
+fn print_push_plan(
+    plan: &PushPlan,
+    session_count: usize,
+    artifact_report: &crate::artifacts::engine::ArtifactReport,
+    verbosity: crate::VerbosityLevel,
+) {
+    use crate::VerbosityLevel;
+
+    if verbosity != VerbosityLevel::Quiet {
+        println!();
+        println!("{}", "Push Summary:".bold().cyan());
+        println!("  {} Added: {}", "•".green(), plan.added);
+        println!("  {} Modified: {}", "•".yellow(), plan.modified);
+        println!("  {} Unchanged: {}", "•".dimmed(), plan.unchanged);
+        let total_with_cwd = session_count.saturating_sub(plan.skipped_no_cwd);
+        println!(
+            "  {} Skipped (no cwd): {}",
+            "•".dimmed(),
+            plan.skipped_no_cwd
+        );
+        println!(
+            "  {} Sessions (with project context): {}",
+            "•".cyan(),
+            total_with_cwd
+        );
+        if !artifact_report.counts.is_empty() {
+            println!(
+                "  {} Artifacts: {} added, {} modified, {} deleted, {} unchanged",
+                "•".cyan(),
+                artifact_report.total_added(),
+                artifact_report.total_modified(),
+                artifact_report.total_deleted(),
+                artifact_report.total_unchanged()
+            );
+        }
+        println!();
+    }
+
+    if verbosity == VerbosityLevel::Verbose {
+        println!("{}", "Files to be pushed:".bold());
+        for (idx, entry) in plan.entries.iter().enumerate().take(20) {
+            let status = match entry.operation {
+                SyncOperation::Unchanged => "unchanged".dimmed(),
+                SyncOperation::Modified => "modified".yellow(),
+                _ => "new".green(),
+            };
+
+            println!(
+                "  {}. {} [{}]",
+                idx + 1,
+                entry.relative_path.display(),
+                status
+            );
+        }
+        if plan.entries.len() > 20 {
+            println!("  ... and {} more", plan.entries.len() - 20);
+        }
+        println!();
+    }
+}
+
+fn print_moves(label: &str, moves: &[(String, String)]) {
+    for (encoded, id) in moves {
+        println!("  {} {encoded} → {id}", label.cyan());
+    }
+}
+
+fn push_to_origin(repo: &GitRepo, branch_name: &str) -> Result<()> {
+    println!("  {} to remote...", "Pushing".cyan());
+    repo.push("origin", branch_name)?;
+    println!("  {} Pushed to origin/{}", "✓".green(), branch_name);
+    Ok(())
+}
+
+#[doc(hidden)]
+pub type PushConfirmation = fn() -> Result<bool>;
+
+fn ask_to_push() -> Result<bool> {
+    Confirm::new("Push?")
+        .with_default(true)
+        .prompt()
+        .context("Failed to get confirmation")
+}
+
 pub fn push_history(
     commit_message: Option<&str>,
     push_remote: bool,
     branch: Option<&str>,
     exclude_attachments: bool,
     interactive: bool,
+    verbosity: crate::VerbosityLevel,
+) -> Result<PushReport> {
+    let asks = interactive && interactive_conflict::is_interactive();
+    let confirm = asks.then_some(ask_to_push as PushConfirmation);
+    push_history_with_confirmation(
+        commit_message,
+        push_remote,
+        branch,
+        exclude_attachments,
+        confirm,
+        verbosity,
+    )
+}
+
+#[doc(hidden)]
+pub fn push_history_with_confirmation(
+    commit_message: Option<&str>,
+    push_remote: bool,
+    branch: Option<&str>,
+    exclude_attachments: bool,
+    confirm: Option<PushConfirmation>,
     verbosity: crate::VerbosityLevel,
 ) -> Result<PushReport> {
     use crate::VerbosityLevel;
@@ -174,16 +293,6 @@ pub fn push_history(
         mapped_projects_only: false,
         ..filter.clone()
     };
-
-    if filter.enable_lfs {
-        if verbosity != VerbosityLevel::Quiet {
-            println!("  {} Git LFS...", "Configuring".cyan());
-        }
-        git::lfs::setup(&state.sync_repo_path, &filter.lfs_patterns)
-            .context("Failed to set up Git LFS")?;
-    }
-
-    git::attributes::ensure_sync_attributes(&state.sync_repo_path)?;
 
     let claude_dir = claude_projects_dir()?;
 
@@ -259,14 +368,39 @@ pub fn push_history(
     }
 
     let projects_dir = state.sync_repo_path.join(&filter.sync_subdirectory);
-    fs::create_dir_all(&projects_dir)?;
-    let moved = crate::project_map::move_into_mapped_ids(&filter, &projects_dir)?;
-    for project in &moved {
-        println!("  {} {}", "Moved".cyan(), project);
+    let plan = plan_push(&sessions, &claude_dir, &projects_dir, &every_transcript)?;
+
+    if let Some(confirm) = confirm {
+        let pending_moves = crate::project_map::pending_mapped_moves(&filter, &projects_dir);
+        print_moves("Will move", &pending_moves);
+        let preview = crate::artifacts::engine::preview_push_artifacts(
+            &claude_home_dir()?,
+            &state.sync_repo_path,
+            &filter,
+        )?;
+        print_push_plan(&plan, sessions.len(), &preview, verbosity);
+        let confirmed = confirm()?;
+        if !confirmed {
+            println!("\n{}", "Push cancelled.".yellow());
+            return Ok(PushReport::default());
+        }
     }
 
+    if filter.enable_lfs {
+        if verbosity != VerbosityLevel::Quiet {
+            println!("  {} Git LFS...", "Configuring".cyan());
+        }
+        git::lfs::setup(&state.sync_repo_path, &filter.lfs_patterns)
+            .context("Failed to set up Git LFS")?;
+    }
+
+    git::attributes::ensure_sync_attributes(&state.sync_repo_path)?;
+
+    fs::create_dir_all(&projects_dir)?;
+    let moved = crate::project_map::move_into_mapped_ids(&filter, &projects_dir)?;
+    print_moves("Moved", &moved);
+
     println!("  {} sessions to sync repository...", "Copying".cyan());
-    let plan = plan_push(&sessions, &claude_dir, &projects_dir, &every_transcript)?;
     let added_count = plan.added;
     let modified_count = plan.modified;
     let unchanged_count = plan.unchanged;
@@ -308,64 +442,9 @@ pub fn push_history(
     )?;
     crate::artifacts::engine::ensure_ignore_files(&state.sync_repo_path)?;
 
-    if verbosity != VerbosityLevel::Quiet {
-        println!();
-        println!("{}", "Push Summary:".bold().cyan());
-        println!("  {} Added: {}", "•".green(), added_count);
-        println!("  {} Modified: {}", "•".yellow(), modified_count);
-        println!("  {} Unchanged: {}", "•".dimmed(), unchanged_count);
-        let total_with_cwd = sessions.len().saturating_sub(skipped_no_cwd);
-        println!("  {} Skipped (no cwd): {}", "•".dimmed(), skipped_no_cwd);
-        println!(
-            "  {} Sessions (with project context): {}",
-            "•".cyan(),
-            total_with_cwd
-        );
-        if !artifact_report.counts.is_empty() {
-            println!(
-                "  {} Artifacts: {} added, {} modified, {} deleted, {} unchanged",
-                "•".cyan(),
-                artifact_report.total_added(),
-                artifact_report.total_modified(),
-                artifact_report.total_deleted(),
-                artifact_report.total_unchanged()
-            );
-        }
-        println!();
-    }
-
-    if verbosity == VerbosityLevel::Verbose {
-        println!("{}", "Files to be pushed:".bold());
-        for (idx, entry) in plan.entries.iter().enumerate().take(20) {
-            let status = match entry.operation {
-                SyncOperation::Unchanged => "unchanged".dimmed(),
-                SyncOperation::Modified => "modified".yellow(),
-                _ => "new".green(),
-            };
-
-            println!(
-                "  {}. {} [{}]",
-                idx + 1,
-                entry.relative_path.display(),
-                status
-            );
-        }
-        if plan.entries.len() > 20 {
-            println!("  ... and {} more", plan.entries.len() - 20);
-        }
-        println!();
-    }
-
-    if interactive && interactive_conflict::is_interactive() {
-        let confirm = Confirm::new("Push?")
-            .with_default(true)
-            .prompt()
-            .context("Failed to get confirmation")?;
-
-        if !confirm {
-            println!("\n{}", "Push cancelled.".yellow());
-            return Ok(PushReport::default());
-        }
+    let plan_is_unprinted = confirm.is_none();
+    if plan_is_unprinted {
+        print_push_plan(&plan, sessions.len(), &artifact_report, verbosity);
     }
 
     crate::progress::while_spinning(format!("{} changes...", "Staging".cyan()), || {
@@ -398,15 +477,6 @@ pub fn push_history(
         repo.commit(message)?;
         println!("  {} Committed: {}", "✓".green(), message);
 
-        if push_remote && state.has_remote {
-            println!("  {} to remote...", "Pushing".cyan());
-
-            match repo.push("origin", &branch_name) {
-                Ok(_) => println!("  {} Pushed to origin/{}", "✓".green(), branch_name),
-                Err(e) => log::warn!("Failed to push: {:#}", e),
-            }
-        }
-
         let mut operation_record = OperationRecord::new(
             OperationType::Push,
             Some(branch_name.clone()),
@@ -431,6 +501,18 @@ pub fn push_history(
         }
     } else {
         println!("  {} No changes to commit", "Note:".yellow());
+    }
+
+    let mut remote_push = Ok(());
+    let pushes_to_remote = push_remote && state.has_remote;
+    let on_detached_head = branch_name.is_empty();
+    if pushes_to_remote && on_detached_head {
+        log::warn!("Failed to push: the sync repository has no branch checked out");
+    } else if pushes_to_remote {
+        let has_unpushed_commits = repo.has_unpushed_commits("origin", &branch_name)?;
+        if has_unpushed_commits {
+            remote_push = push_to_origin(&repo, &branch_name);
+        }
     }
 
     println!("\n{}", "=== Push Summary ===".bold().cyan());
@@ -504,14 +586,22 @@ pub fn push_history(
 
     super::print_artifact_changes(&artifact_report);
 
+    if let Err(e) = crate::undo::cleanup_old_snapshots(None, false) {
+        log::warn!("Failed to cleanup old snapshots: {}", e);
+    }
+
+    remote_push.with_context(|| {
+        if has_changes {
+            format!("Committed locally, but pushing to origin/{branch_name} failed")
+        } else {
+            format!("Pushing the earlier commits to origin/{branch_name} failed")
+        }
+    })?;
+
     if verbosity == VerbosityLevel::Quiet {
         println!("Push complete");
     } else {
         println!("\n{}", "Push complete!".green().bold());
-    }
-
-    if let Err(e) = crate::undo::cleanup_old_snapshots(None, false) {
-        log::warn!("Failed to cleanup old snapshots: {}", e);
     }
 
     Ok(PushReport {

@@ -59,6 +59,36 @@ fn settle_conflict(
     crate::merge_tool::resolve_conflict(&filter.merge_tool, filter.prefer_merge_tool, file)
 }
 
+const PARTIAL_PULL_UNDO_HINT: &str =
+    "The pull stopped partway. Run `claude-code-sync undo pull` to undo what it wrote.";
+
+fn save_pull_snapshot(
+    mut snapshot: Snapshot,
+    created_paths: Vec<String>,
+    verbosity: crate::VerbosityLevel,
+) -> Result<PathBuf> {
+    snapshot
+        .record_pull_result(created_paths)
+        .context("Failed to record the files the pull wrote")?;
+    let path = snapshot
+        .save_to_disk(None)
+        .context("Failed to save snapshot to disk")?;
+
+    if verbosity != crate::VerbosityLevel::Quiet {
+        println!(
+            "  {} Snapshot created: {} ({} files saved, {} created by this pull)",
+            "✓".green(),
+            path.file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_else(|| path.display().to_string()),
+            snapshot.files.len(),
+            snapshot.deleted_files.len()
+        );
+    }
+
+    Ok(path)
+}
+
 pub fn pull_history(
     fetch_remote: bool,
     branch: Option<&str>,
@@ -144,43 +174,50 @@ pub fn pull_history(
         crate::artifacts::engine::plan_pull(&claude_home_dir()?, &state.sync_repo_path, &filter)?;
     artifact_plan.can_ask = interactive_conflict::is_interactive();
 
-    let snapshot_path = if detector.has_conflicts() || !artifact_plan.is_empty() {
+    let (undiscovered_to_overwrite, transcripts_to_create): (Vec<PathBuf>, Vec<PathBuf>) =
+        remote_sessions
+            .iter()
+            .filter_map(|remote| {
+                local_destination(remote, &remote_projects_dir, &claude_dir, &filter)
+            })
+            .filter(|destination| !local_by_path.contains_key(destination.as_path()))
+            .partition(|destination| destination.exists());
+
+    let mut created_paths = artifact_plan.created_paths();
+    created_paths.extend(
+        transcripts_to_create
+            .iter()
+            .map(|path| path.to_string_lossy().to_string()),
+    );
+
+    let merges_conflicts = detector.has_conflicts();
+    let writes_artifacts = !artifact_plan.is_empty();
+    let creates_transcripts = !transcripts_to_create.is_empty();
+    let overwrites_undiscovered = !undiscovered_to_overwrite.is_empty();
+    let writes_anything =
+        merges_conflicts || writes_artifacts || creates_transcripts || overwrites_undiscovered;
+
+    let snapshot = if writes_anything {
         let mut files_to_snapshot: Vec<PathBuf> = detector
             .conflicts()
             .iter()
             .map(|c| c.local_file.clone())
             .collect();
         files_to_snapshot.extend(artifact_plan.paths_to_snapshot());
+        files_to_snapshot.extend(undiscovered_to_overwrite);
 
         println!(
-            "  {} snapshot of {} files to be modified...",
+            "  {} snapshot of {} files to be modified ({} to be created)...",
             "Creating".cyan(),
-            files_to_snapshot.len()
+            files_to_snapshot.len(),
+            created_paths.len()
         );
 
         warn_large_files(&files_to_snapshot);
 
-        let mut snapshot = Snapshot::create(OperationType::Pull, files_to_snapshot.iter(), None)
+        let snapshot = Snapshot::create(OperationType::Pull, files_to_snapshot.iter(), None)
             .context("Failed to create snapshot before pull")?;
-
-        snapshot.deleted_files = artifact_plan.created_paths();
-
-        let path = snapshot
-            .save_to_disk(None)
-            .context("Failed to save snapshot to disk")?;
-
-        if verbosity != VerbosityLevel::Quiet {
-            println!(
-                "  {} Snapshot created: {} ({} files)",
-                "✓".green(),
-                path.file_name()
-                    .map(|n| n.to_string_lossy().to_string())
-                    .unwrap_or_else(|| path.display().to_string()),
-                files_to_snapshot.len()
-            );
-        }
-
-        Some(path)
+        Some(snapshot)
     } else {
         println!("  {} No conflicts - skipping snapshot", "✓".green());
         None
@@ -232,36 +269,41 @@ pub fn pull_history(
     }
 
     let mut affected_conversations: Vec<ConversationSummary> = Vec::new();
+    let mut added_count = 0;
+    let mut modified_count = 0;
+    let mut unchanged_count = 0;
+    let mut skipped_no_local_match = 0;
 
-    if detector.has_conflicts() {
-        println!(
-            "  {} {} conflicts detected",
-            "!".yellow(),
-            detector.conflict_count()
-        );
+    let mut write_pull = || -> Result<crate::artifacts::engine::ArtifactReport> {
+        if detector.has_conflicts() {
+            println!(
+                "  {} {} conflicts detected",
+                "!".yellow(),
+                detector.conflict_count()
+            );
 
-        println!("  {} smart merge...", "Attempting".cyan());
+            println!("  {} smart merge...", "Attempting".cyan());
 
-        let remote_by_path: HashMap<&Path, &ConversationSession> = remote_sessions
-            .iter()
-            .map(|session| (session.file_path.as_path(), session))
-            .collect();
+            let remote_by_path: HashMap<&Path, &ConversationSession> = remote_sessions
+                .iter()
+                .map(|session| (session.file_path.as_path(), session))
+                .collect();
 
-        let mut smart_merge_success_count = 0;
-        let mut smart_merge_failed_conflicts = Vec::new();
+            let mut smart_merge_success_count = 0;
+            let mut smart_merge_failed_conflicts = Vec::new();
 
-        for conflict in detector.conflicts_mut() {
-            if let (Some(local_session), Some(remote_session)) = (
-                local_by_path.get(conflict.local_file.as_path()),
-                remote_by_path.get(conflict.remote_file.as_path()),
-            ) {
-                match conflict.smart_merge_into_local_file(local_session, remote_session) {
-                    Ok(()) => {
-                        smart_merge_success_count += 1;
-                        if let crate::conflict::ConflictResolution::SmartMerge { ref stats } =
-                            conflict.resolution
-                        {
-                            println!(
+            for conflict in detector.conflicts_mut() {
+                if let (Some(local_session), Some(remote_session)) = (
+                    local_by_path.get(conflict.local_file.as_path()),
+                    remote_by_path.get(conflict.remote_file.as_path()),
+                ) {
+                    match conflict.smart_merge_into_local_file(local_session, remote_session) {
+                        Ok(()) => {
+                            smart_merge_success_count += 1;
+                            if let crate::conflict::ConflictResolution::SmartMerge { ref stats } =
+                                conflict.resolution
+                            {
+                                println!(
                                 "  {} Smart merged {} ({} local + {} remote = {} total, {} branches)",
                                 "✓".green(),
                                 conflict.session_id,
@@ -270,245 +312,258 @@ pub fn pull_history(
                                 stats.merged_messages,
                                 stats.branches_detected
                             );
+                            }
                         }
-                    }
-                    Err(e) => {
-                        log::warn!("Smart merge failed for {}: {}", conflict.session_id, e);
-                        log::info!("Falling back to manual resolution...");
-                        smart_merge_failed_conflicts.push(conflict.clone());
+                        Err(e) => {
+                            log::warn!("Smart merge failed for {}: {}", conflict.session_id, e);
+                            log::info!("Falling back to manual resolution...");
+                            conflict.merge_error = Some(format!("{e:#}"));
+                            smart_merge_failed_conflicts.push(conflict.clone());
+                        }
                     }
                 }
             }
-        }
 
-        println!(
-            "  {} Successfully smart merged {}/{} conflicts",
-            "✓".green(),
-            smart_merge_success_count,
-            detector.conflict_count()
-        );
-
-        let renames = if !smart_merge_failed_conflicts.is_empty() {
             println!(
-                "  {} {} conflicts require manual resolution",
-                "!".yellow(),
-                smart_merge_failed_conflicts.len()
+                "  {} Successfully smart merged {}/{} conflicts",
+                "✓".green(),
+                smart_merge_success_count,
+                detector.conflict_count()
             );
 
-            let use_interactive = crate::interactive_conflict::is_interactive();
-
-            if use_interactive {
+            let renames = if !smart_merge_failed_conflicts.is_empty() {
                 println!(
-                    "\n{} Running in interactive mode for remaining conflicts",
-                    "→".cyan()
+                    "  {} {} conflicts require manual resolution",
+                    "!".yellow(),
+                    smart_merge_failed_conflicts.len()
                 );
 
-                let resolution_result = crate::interactive_conflict::resolve_conflicts_interactive(
-                    &mut smart_merge_failed_conflicts,
-                )?;
+                let use_interactive = crate::interactive_conflict::is_interactive();
 
-                let renames = crate::interactive_conflict::apply_resolutions(
-                    &resolution_result,
-                    &remote_sessions,
-                    &claude_dir,
-                    &remote_projects_dir,
-                )?;
+                if use_interactive {
+                    println!(
+                        "\n{} Running in interactive mode for remaining conflicts",
+                        "→".cyan()
+                    );
 
-                let report = ConflictReport::from_conflicts(detector.conflicts());
-                save_conflict_report(&report)?;
+                    let resolution_result =
+                        crate::interactive_conflict::resolve_conflicts_interactive(
+                            &mut smart_merge_failed_conflicts,
+                        )?;
 
-                renames
-            } else {
-                println!(
-                    "\n{} Using automatic conflict resolution (keep both versions)",
-                    "→".cyan()
-                );
+                    let renames = crate::interactive_conflict::apply_resolutions(
+                        &resolution_result,
+                        &remote_sessions,
+                        &claude_dir,
+                        &remote_projects_dir,
+                    )?;
 
-                let mut renames = Vec::new();
+                    let report = ConflictReport::from_conflicts(detector.conflicts());
+                    save_conflict_report(&report)?;
 
-                println!("\n{}", "Conflict Resolution:".yellow().bold());
-                for conflict in &smart_merge_failed_conflicts {
-                    let timestamp = chrono::Utc::now().format("%Y%m%d-%H%M%S");
-                    let conflict_suffix = format!("conflict-{timestamp}");
+                    renames
+                } else {
+                    println!(
+                        "\n{} Using automatic conflict resolution (keep both versions)",
+                        "→".cyan()
+                    );
 
-                    if let Ok(renamed_path) = conflict.clone().resolve_keep_both(&conflict_suffix) {
-                        let relative_renamed = renamed_path
-                            .strip_prefix(&claude_dir)
-                            .unwrap_or(&renamed_path);
-                        println!(
-                            "  {} remote version saved as: {}",
-                            "→".yellow(),
-                            relative_renamed.display().to_string().cyan()
-                        );
+                    let mut renames = Vec::new();
 
-                        if let Some(session) = remote_sessions
-                            .iter()
-                            .find(|s| s.session_id == conflict.session_id)
-                        {
-                            session.copy_to(&renamed_path)?;
+                    println!("\n{}", "Conflict Resolution:".yellow().bold());
+                    for conflict in &smart_merge_failed_conflicts {
+                        let saved_copy = crate::interactive_conflict::save_new_remote_copy(
+                            conflict,
+                            &remote_sessions,
+                        )?;
+                        if let Some(renamed_path) = saved_copy {
+                            let relative_renamed = renamed_path
+                                .strip_prefix(&claude_dir)
+                                .unwrap_or(&renamed_path);
+                            println!(
+                                "  {} remote version saved as: {}",
+                                "→".yellow(),
+                                relative_renamed.display().to_string().cyan()
+                            );
+
+                            renames.push((conflict.remote_file.clone(), renamed_path));
                         }
+                    }
 
-                        renames.push((conflict.remote_file.clone(), renamed_path));
+                    let report = ConflictReport::from_conflicts(detector.conflicts());
+                    save_conflict_report(&report)?;
+
+                    renames
+                }
+            } else {
+                Vec::new()
+            };
+
+            created_paths.extend(
+                renames
+                    .iter()
+                    .map(|(_, renamed_path)| renamed_path.to_string_lossy().to_string()),
+            );
+
+            for (original_path, renamed_path) in &renames {
+                let relative_path = renamed_path
+                    .strip_prefix(&claude_dir)
+                    .unwrap_or(renamed_path)
+                    .to_string_lossy()
+                    .to_string();
+
+                if let Some(session) = remote_sessions
+                    .iter()
+                    .find(|s| s.file_path == *original_path)
+                {
+                    match ConversationSummary::new(
+                        session.session_id.clone(),
+                        relative_path.clone(),
+                        session.latest_timestamp().map(str::to_string),
+                        session.message_count(),
+                        SyncOperation::Conflict,
+                    ) {
+                        Ok(summary) => affected_conversations.push(summary),
+                        Err(e) => log::warn!(
+                            "Failed to create summary for conflict {}: {}",
+                            relative_path,
+                            e
+                        ),
                     }
                 }
-
-                let report = ConflictReport::from_conflicts(detector.conflicts());
-                save_conflict_report(&report)?;
-
-                renames
             }
+
+            println!(
+                "\n{} View details with: claude-code-sync report",
+                "Hint:".cyan()
+            );
         } else {
-            Vec::new()
-        };
+            println!("  {} No conflicts detected", "✓".green());
+        }
 
-        for (_original_path, renamed_path) in &renames {
-            let relative_path = renamed_path
-                .strip_prefix(&claude_dir)
-                .unwrap_or(renamed_path)
-                .to_string_lossy()
-                .to_string();
+        println!("  {} non-conflicting sessions...", "Merging".cyan());
+        let mut merged_count = 0;
+        let mut skipped_by_project = crate::project_map::SkippedByProject::new();
 
-            if let Some(session) = remote_sessions.iter().find(|s| {
-                let session_file = s.file_path.file_name();
-                let renamed_file = renamed_path.file_name();
-                session_file
-                    .and_then(|f| f.to_str())
-                    .and_then(|name| name.split('-').next())
-                    == renamed_file
-                        .and_then(|f| f.to_str())
-                        .and_then(|name| name.split('-').next())
-            }) {
-                match ConversationSummary::new(
-                    session.session_id.clone(),
-                    relative_path.clone(),
-                    session.latest_timestamp().map(str::to_string),
-                    session.message_count(),
-                    SyncOperation::Conflict,
-                ) {
-                    Ok(summary) => affected_conversations.push(summary),
-                    Err(e) => log::warn!(
-                        "Failed to create summary for conflict {}: {}",
-                        relative_path,
-                        e
+        let progress = crate::progress::bar(remote_sessions.len(), "Merging sessions");
+        for remote_session in remote_sessions.iter().progress_with(progress) {
+            let remote_relative = remote_session
+                .file_path
+                .strip_prefix(&remote_projects_dir)
+                .unwrap_or(&remote_session.file_path);
+
+            let destination =
+                local_destination(remote_session, &remote_projects_dir, &claude_dir, &filter);
+            let Some(dest_path) = destination else {
+                match crate::project_map::split_project_path(remote_relative) {
+                    Some((repo_project_dir, _)) => {
+                        skipped_no_local_match += 1;
+                        skipped_by_project
+                            .entry(repo_project_dir.to_string())
+                            .or_default()
+                            .push(remote_session.file_path.clone());
+                    }
+                    None => log::warn!(
+                        "Skipping {} (not a transcript inside a project directory)",
+                        remote_session.file_path.display()
                     ),
                 }
+                continue;
+            };
+
+            if detector
+                .conflicts()
+                .iter()
+                .any(|conflict| conflict.local_file == dest_path)
+            {
+                continue;
             }
-        }
 
-        println!(
-            "\n{} View details with: claude-code-sync report",
-            "Hint:".cyan()
-        );
-    } else {
-        println!("  {} No conflicts detected", "✓".green());
-    }
+            let relative_path_for_tracking = dest_path
+                .strip_prefix(&claude_dir)
+                .map(|p| p.to_path_buf())
+                .unwrap_or_else(|_| remote_relative.to_path_buf());
 
-    println!("  {} non-conflicting sessions...", "Merging".cyan());
-    let mut merged_count = 0;
-    let mut added_count = 0;
-    let mut modified_count = 0;
-    let mut unchanged_count = 0;
-    let mut skipped_no_local_match = 0;
-    let mut skipped_by_project = crate::project_map::SkippedByProject::new();
-
-    let progress = crate::progress::bar(remote_sessions.len(), "Merging sessions");
-    for remote_session in remote_sessions.iter().progress_with(progress) {
-        let remote_relative = remote_session
-            .file_path
-            .strip_prefix(&remote_projects_dir)
-            .unwrap_or(&remote_session.file_path);
-
-        let destination =
-            local_destination(remote_session, &remote_projects_dir, &claude_dir, &filter);
-        let Some(dest_path) = destination else {
-            match crate::project_map::split_project_path(remote_relative) {
-                Some((repo_project_dir, _)) => {
-                    skipped_no_local_match += 1;
-                    skipped_by_project
-                        .entry(repo_project_dir.to_string())
-                        .or_default()
-                        .push(remote_session.file_path.clone());
+            let operation = if let Some(local) = local_by_path.get(dest_path.as_path()) {
+                if local.content_hash() == remote_session.content_hash() {
+                    unchanged_count += 1;
+                    SyncOperation::Unchanged
+                } else {
+                    modified_count += 1;
+                    SyncOperation::Modified
                 }
-                None => log::warn!(
-                    "Skipping {} (not a transcript inside a project directory)",
-                    remote_session.file_path.display()
-                ),
-            }
-            continue;
-        };
-
-        if detector
-            .conflicts()
-            .iter()
-            .any(|conflict| conflict.local_file == dest_path)
-        {
-            continue;
-        }
-
-        let relative_path_for_tracking = dest_path
-            .strip_prefix(&claude_dir)
-            .map(|p| p.to_path_buf())
-            .unwrap_or_else(|_| remote_relative.to_path_buf());
-
-        let operation = if let Some(local) = local_by_path.get(dest_path.as_path()) {
-            if local.content_hash() == remote_session.content_hash() {
-                unchanged_count += 1;
-                SyncOperation::Unchanged
             } else {
-                modified_count += 1;
-                SyncOperation::Modified
+                added_count += 1;
+                SyncOperation::Added
+            };
+
+            if operation != SyncOperation::Unchanged {
+                remote_session.copy_to(&dest_path)?;
+                merged_count += 1;
             }
-        } else {
-            added_count += 1;
-            SyncOperation::Added
-        };
 
-        if operation != SyncOperation::Unchanged {
-            remote_session.copy_to(&dest_path)?;
-            merged_count += 1;
+            let relative_path_str = relative_path_for_tracking.to_string_lossy().to_string();
+            match ConversationSummary::new(
+                remote_session.session_id.clone(),
+                relative_path_str.clone(),
+                remote_session.latest_timestamp().map(str::to_string),
+                remote_session.message_count(),
+                operation,
+            ) {
+                Ok(summary) => affected_conversations.push(summary),
+                Err(e) => log::warn!("Failed to create summary for {}: {}", relative_path_str, e),
+            }
         }
 
-        let relative_path_str = relative_path_for_tracking.to_string_lossy().to_string();
-        match ConversationSummary::new(
-            remote_session.session_id.clone(),
-            relative_path_str.clone(),
-            remote_session.latest_timestamp().map(str::to_string),
-            remote_session.message_count(),
-            operation,
-        ) {
-            Ok(summary) => affected_conversations.push(summary),
-            Err(e) => log::warn!("Failed to create summary for {}: {}", relative_path_str, e),
-        }
-    }
+        println!("  {} Merged {} sessions", "✓".green(), merged_count);
 
-    println!("  {} Merged {} sessions", "✓".green(), merged_count);
-
-    crate::project_map::merge_skipped(&mut skipped_by_project, &artifact_plan.unmapped_projects);
-    for line in crate::project_map::skipped_project_warnings(
-        &skipped_by_project,
-        filter.warn_each_skipped_file,
-    ) {
-        log::warn!("{line}");
-    }
-
-    let artifact_report = crate::artifacts::engine::apply_pull(&artifact_plan, interactive)?;
-    crate::artifacts::engine::record_synced_hashes(
-        &claude_home_dir()?,
-        &state.sync_repo_path,
-        &filter,
-    )?;
-    if !artifact_plan.is_empty() {
-        println!(
-            "  {} Artifacts: {} created, {} overwritten locally, {} deleted locally",
-            "✓".green(),
-            artifact_report.total_added(),
-            artifact_report.total_modified(),
-            artifact_report.total_deleted()
+        crate::project_map::merge_skipped(
+            &mut skipped_by_project,
+            &artifact_plan.unmapped_projects,
         );
-        if artifact_report.total_modified() > 0 || artifact_report.total_deleted() > 0 {
-            println!("    {}", "Undo with: claude-code-sync undo pull".dimmed());
+        for line in crate::project_map::skipped_project_warnings(
+            &skipped_by_project,
+            filter.warn_each_skipped_file,
+        ) {
+            log::warn!("{line}");
         }
-    }
+
+        let artifact_report = crate::artifacts::engine::apply_pull(&artifact_plan, interactive)?;
+        crate::artifacts::engine::record_synced_hashes(
+            &claude_home_dir()?,
+            &state.sync_repo_path,
+            &filter,
+        )?;
+        if !artifact_plan.is_empty() {
+            println!(
+                "  {} Artifacts: {} created, {} overwritten locally, {} deleted locally",
+                "✓".green(),
+                artifact_report.total_added(),
+                artifact_report.total_modified(),
+                artifact_report.total_deleted()
+            );
+            if artifact_report.total_modified() > 0 || artifact_report.total_deleted() > 0 {
+                println!("    {}", "Undo with: claude-code-sync undo pull".dimmed());
+            }
+        }
+
+        Ok(artifact_report)
+    };
+    let written = write_pull();
+    let wrote_everything = written.is_ok();
+
+    let saved_snapshot = snapshot
+        .map(|snapshot| save_pull_snapshot(snapshot, created_paths, verbosity))
+        .transpose();
+    let snapshot_path = match saved_snapshot {
+        Ok(path) => path,
+        Err(error) if !wrote_everything => {
+            log::warn!("{error:#}");
+            None
+        }
+        Err(error) => return Err(error),
+    };
+    let undo_available = snapshot_path.is_some();
 
     let mut operation_record = OperationRecord::new(
         OperationType::Pull,
@@ -517,7 +572,9 @@ pub fn pull_history(
     );
 
     operation_record.snapshot_path = snapshot_path;
-    operation_record.artifact_counts = artifact_report.counts.clone();
+    if let Ok(report) = &written {
+        operation_record.artifact_counts = report.counts.clone();
+    }
 
     let mut history = match OperationHistory::load() {
         Ok(h) => h,
@@ -532,6 +589,12 @@ pub fn pull_history(
         log::warn!("Failed to save operation to history: {}", e);
         log::info!("Pull completed successfully, but history was not updated.");
     }
+
+    let artifact_report = match written {
+        Ok(report) => report,
+        Err(error) if undo_available => return Err(error.context(PARTIAL_PULL_UNDO_HINT)),
+        Err(error) => return Err(error),
+    };
 
     println!("\n{}", "=== Pull Summary ===".bold().cyan());
 

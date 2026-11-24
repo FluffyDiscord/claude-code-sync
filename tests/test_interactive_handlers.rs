@@ -33,6 +33,8 @@ fn test_undo_preview_display_quiet() {
         conversation_count: 5,
         commit_hash: None,
         snapshot_timestamp: Some(chrono::Utc::now()),
+        files_to_delete: Vec::new(),
+        files_changed_since_pull: Vec::new(),
     };
 
     preview.display(UndoVerbosity::Quiet);
@@ -48,6 +50,8 @@ fn test_undo_preview_display_normal() {
         conversation_count: 3,
         commit_hash: Some("abc123def456".to_string()),
         snapshot_timestamp: Some(chrono::Utc::now()),
+        files_to_delete: Vec::new(),
+        files_changed_since_pull: Vec::new(),
     };
 
     preview.display(UndoVerbosity::Normal);
@@ -67,6 +71,8 @@ fn test_undo_preview_display_verbose() {
         conversation_count: 10,
         commit_hash: None,
         snapshot_timestamp: Some(chrono::Utc::now()),
+        files_to_delete: Vec::new(),
+        files_changed_since_pull: Vec::new(),
     };
 
     preview.display(UndoVerbosity::Verbose);
@@ -86,6 +92,8 @@ fn test_undo_preview_many_files_verbose() {
         conversation_count: 50,
         commit_hash: None,
         snapshot_timestamp: Some(chrono::Utc::now()),
+        files_to_delete: Vec::new(),
+        files_changed_since_pull: Vec::new(),
     };
 
     preview.display(UndoVerbosity::Verbose);
@@ -101,6 +109,8 @@ fn test_undo_preview_push_with_commit() {
         conversation_count: 7,
         commit_hash: Some("1234567890abcdef1234567890abcdef12345678".to_string()),
         snapshot_timestamp: Some(chrono::Utc::now() - chrono::Duration::hours(2)),
+        files_to_delete: Vec::new(),
+        files_changed_since_pull: Vec::new(),
     };
 
     preview.display(UndoVerbosity::Verbose);
@@ -227,6 +237,8 @@ fn test_undo_preview_field_access() {
         conversation_count: 42,
         commit_hash: Some("abc123".to_string()),
         snapshot_timestamp: Some(snapshot_time),
+        files_to_delete: Vec::new(),
+        files_changed_since_pull: Vec::new(),
     };
 
     assert_eq!(preview.operation_type, OperationType::Pull);
@@ -246,6 +258,8 @@ fn test_undo_preview_empty_files() {
         conversation_count: 0,
         commit_hash: Some("def456".to_string()),
         snapshot_timestamp: Some(chrono::Utc::now()),
+        files_to_delete: Vec::new(),
+        files_changed_since_pull: Vec::new(),
     };
 
     preview.display(UndoVerbosity::Quiet);

@@ -286,6 +286,22 @@ impl GitRepo {
         self.run_git(&["branch", "--show-current"])
     }
 
+    pub fn has_unpushed_commits(&self, remote: &str, branch: &str) -> Result<bool> {
+        let local_ref = format!("refs/heads/{branch}");
+        let has_branch = self.git_succeeds(&["rev-parse", "--verify", "--quiet", &local_ref]);
+        if !has_branch {
+            return Ok(false);
+        }
+        let tracking_ref = format!("refs/remotes/{remote}/{branch}");
+        let tracks_remote = self.git_succeeds(&["rev-parse", "--verify", "--quiet", &tracking_ref]);
+        if !tracks_remote {
+            return Ok(true);
+        }
+        let range = format!("{tracking_ref}..{local_ref}");
+        let unpushed = self.run_git(&["rev-list", "--count", &range])?;
+        Ok(unpushed != "0")
+    }
+
     pub fn current_commit_hash(&self) -> Result<String> {
         self.run_git(&["rev-parse", "HEAD"])
     }

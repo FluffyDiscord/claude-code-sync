@@ -49,8 +49,16 @@ enum Commands {
         #[arg(short, long)]
         message: Option<String>,
 
-        /// Push to remote after committing
-        #[arg(long, default_value_t = true)]
+        /// Push to remote after committing; `--push-remote false` only
+        /// commits to the local sync repository
+        #[arg(
+            long,
+            value_name = "BOOL",
+            default_value_t = true,
+            num_args = 0..=1,
+            default_missing_value = "true",
+            action = clap::ArgAction::Set,
+        )]
         push_remote: bool,
 
         /// Branch to push to (default: current branch)

@@ -3,7 +3,7 @@ use colored::Colorize;
 
 use crate::git::GitRepo;
 
-use super::state::SyncState;
+use super::state::{MultiRepoState, SyncState};
 
 pub fn show_remote() -> Result<()> {
     let state = SyncState::load()?;
@@ -28,10 +28,7 @@ pub fn show_remote() -> Result<()> {
 
     if remotes.is_empty() {
         println!("{}", "No remotes configured".yellow());
-        println!(
-            "\n{} claude-code-sync remote set origin <url>",
-            "Hint:".cyan()
-        );
+        println!("\n{} claude-code-sync remote set <url>", "Hint:".cyan());
         return Ok(());
     }
 
@@ -95,9 +92,7 @@ pub fn set_remote(name: &str, url: &str) -> Result<()> {
     }
 
     if name == "origin" {
-        let mut state = state;
-        state.has_remote = true;
-        state.save()?;
+        save_origin_url(Some(url))?;
     }
 
     println!("\n{} claude-code-sync push", "Next:".cyan());
@@ -119,10 +114,21 @@ pub fn remove_remote(name: &str) -> Result<()> {
     println!("{} Removed remote '{}'", "✓".green().bold(), name.cyan());
 
     if name == "origin" {
-        let mut state = state;
-        state.has_remote = false;
-        state.save()?;
+        save_origin_url(None)?;
     }
 
     Ok(())
+}
+
+fn save_origin_url(url: Option<&str>) -> Result<()> {
+    let mut state = MultiRepoState::load()?;
+    let active = state
+        .repos
+        .get_mut(&state.active_repo)
+        .ok_or_else(|| anyhow!("Active repository not found in state"))?;
+
+    active.has_remote = url.is_some();
+    active.remote_url = url.map(str::to_string);
+
+    state.save()
 }

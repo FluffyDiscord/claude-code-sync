@@ -48,21 +48,6 @@ impl SyncState {
         Ok(state)
     }
 
-    pub(crate) fn save(&self) -> Result<()> {
-        let state_path = Self::state_file_path()?;
-
-        if let Some(parent) = state_path.parent() {
-            fs::create_dir_all(parent)?;
-        }
-
-        let content =
-            serde_json::to_string_pretty(self).context("Failed to serialize sync state")?;
-
-        fs::write(&state_path, content).context("Failed to write sync state")?;
-
-        Ok(())
-    }
-
     fn state_file_path() -> Result<PathBuf> {
         crate::config::ConfigManager::state_file_path()
     }
@@ -100,16 +85,7 @@ fn default_version() -> u32 {
     2
 }
 
-#[allow(dead_code)]
 impl MultiRepoState {
-    pub fn active(&self) -> Option<&RepoConfig> {
-        self.repos.get(&self.active_repo)
-    }
-
-    pub fn active_mut(&mut self) -> Option<&mut RepoConfig> {
-        self.repos.get_mut(&self.active_repo)
-    }
-
     pub fn load() -> Result<Self> {
         let state_path = SyncState::state_file_path()?;
 
@@ -174,42 +150,5 @@ impl MultiRepoState {
         fs::write(&state_path, content).context("Failed to write multi-repo state")?;
 
         Ok(())
-    }
-
-    pub fn has_repo(&self, name: &str) -> bool {
-        self.repos.contains_key(name)
-    }
-
-    pub fn add_repo(&mut self, config: RepoConfig) -> Result<()> {
-        if self.repos.contains_key(&config.name) {
-            return Err(anyhow!("Repository '{}' already exists", config.name));
-        }
-        self.repos.insert(config.name.clone(), config);
-        Ok(())
-    }
-
-    pub fn remove_repo(&mut self, name: &str) -> Result<()> {
-        if name == self.active_repo {
-            return Err(anyhow!(
-                "Cannot remove active repository '{}'. Switch to another repo first.",
-                name
-            ));
-        }
-        if self.repos.remove(name).is_none() {
-            return Err(anyhow!("Repository '{}' not found", name));
-        }
-        Ok(())
-    }
-
-    pub fn switch_active(&mut self, name: &str) -> Result<()> {
-        if !self.repos.contains_key(name) {
-            return Err(anyhow!("Repository '{}' not found", name));
-        }
-        self.active_repo = name.to_string();
-        Ok(())
-    }
-
-    pub fn repo_names(&self) -> Vec<&String> {
-        self.repos.keys().collect()
     }
 }

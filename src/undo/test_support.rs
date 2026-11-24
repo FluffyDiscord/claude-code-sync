@@ -43,8 +43,8 @@ pub(super) fn metadata_only_snapshot(
         git_commit_hash: None,
         files: HashMap::new(),
         branch: None,
-        base_snapshot_id: None,
         deleted_files: Vec::new(),
+        written_hashes: HashMap::new(),
     }
 }
 

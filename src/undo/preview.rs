@@ -13,6 +13,28 @@ pub struct UndoPreview {
     pub conversation_count: usize,
     pub commit_hash: Option<String>,
     pub snapshot_timestamp: Option<chrono::DateTime<chrono::Utc>>,
+    pub files_to_delete: Vec<String>,
+    pub files_changed_since_pull: Vec<String>,
+}
+
+const NORMAL_FILE_LIST_LIMIT: usize = 10;
+
+fn print_file_list(title: &str, files: &[String], limit: usize) {
+    use colored::Colorize;
+
+    if files.is_empty() {
+        return;
+    }
+    println!("\n{}", title.bold());
+    for file in files.iter().take(limit) {
+        println!("  • {}", file.dimmed());
+    }
+    if files.len() > limit {
+        println!(
+            "  ... and {} more files",
+            (files.len() - limit).to_string().dimmed()
+        );
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -38,6 +60,15 @@ impl UndoPreview {
                 );
                 if !self.affected_files.is_empty() {
                     println!("  {} files will be restored", self.affected_files.len());
+                }
+                if !self.files_to_delete.is_empty() {
+                    println!("  {} files will be removed", self.files_to_delete.len());
+                }
+                if !self.files_changed_since_pull.is_empty() {
+                    println!(
+                        "  {} files changed after the pull stay as they are",
+                        self.files_changed_since_pull.len()
+                    );
                 }
             }
 
@@ -80,21 +111,21 @@ impl UndoPreview {
                     self.conversation_count.to_string().yellow()
                 );
 
-                if !self.affected_files.is_empty() {
-                    println!("\n{}", "Files to be restored:".bold());
-                    let display_count = self.affected_files.len().min(10);
-                    for file in self.affected_files.iter().take(display_count) {
-                        println!("  • {}", file.dimmed());
-                    }
-                    if self.affected_files.len() > display_count {
-                        println!(
-                            "  ... and {} more files",
-                            (self.affected_files.len() - display_count)
-                                .to_string()
-                                .dimmed()
-                        );
-                    }
-                }
+                print_file_list(
+                    "Files to be restored:",
+                    &self.affected_files,
+                    NORMAL_FILE_LIST_LIMIT,
+                );
+                print_file_list(
+                    "Files the pull created, to be removed:",
+                    &self.files_to_delete,
+                    NORMAL_FILE_LIST_LIMIT,
+                );
+                print_file_list(
+                    "Files changed after the pull, kept as they are:",
+                    &self.files_changed_since_pull,
+                    NORMAL_FILE_LIST_LIMIT,
+                );
 
                 if let Some(snapshot_ts) = self.snapshot_timestamp {
                     println!(
@@ -169,6 +200,16 @@ impl UndoPreview {
                         }
                     }
                 }
+                print_file_list(
+                    "Files the pull created, to be removed:",
+                    &self.files_to_delete,
+                    usize::MAX,
+                );
+                print_file_list(
+                    "Files changed after the pull, kept as they are:",
+                    &self.files_changed_since_pull,
+                    usize::MAX,
+                );
 
                 if let Some(snapshot_ts) = self.snapshot_timestamp {
                     println!(
@@ -223,7 +264,7 @@ pub fn preview_undo_pull(history_path: Option<PathBuf>) -> Result<UndoPreview> {
 
     let snapshot = Snapshot::load_from_disk(snapshot_path)?;
 
-    let affected_files: Vec<String> = snapshot.files.keys().cloned().collect();
+    let affected_files = snapshot.list_files_to_restore();
 
     Ok(UndoPreview {
         operation_type: OperationType::Pull,
@@ -233,6 +274,8 @@ pub fn preview_undo_pull(history_path: Option<PathBuf>) -> Result<UndoPreview> {
         conversation_count: last_pull.affected_conversations.len(),
         commit_hash: None,
         snapshot_timestamp: Some(snapshot.timestamp),
+        files_to_delete: snapshot.list_created_files_to_remove(),
+        files_changed_since_pull: snapshot.list_files_changed_since_pull(),
     })
 }
 
@@ -252,6 +295,8 @@ pub fn preview_undo_push(history_path: Option<PathBuf>) -> Result<UndoPreview> {
             conversation_count: last_push.affected_conversations.len(),
             commit_hash: Some(hash.clone()),
             snapshot_timestamp: None,
+            files_to_delete: Vec::new(),
+            files_changed_since_pull: Vec::new(),
         });
     }
 
@@ -280,6 +325,8 @@ pub fn preview_undo_push(history_path: Option<PathBuf>) -> Result<UndoPreview> {
         conversation_count: last_push.affected_conversations.len(),
         commit_hash: snapshot.git_commit_hash.clone(),
         snapshot_timestamp: Some(snapshot.timestamp),
+        files_to_delete: Vec::new(),
+        files_changed_since_pull: Vec::new(),
     })
 }
 

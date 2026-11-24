@@ -183,25 +183,35 @@ pub fn checkout_directories(filter: &FilterConfig, local_projects_dir: &Path) ->
     directories
 }
 
-pub fn move_into_mapped_ids(
+pub fn pending_mapped_moves(
     filter: &FilterConfig,
     repo_projects_dir: &Path,
-) -> Result<Vec<String>> {
+) -> Vec<(String, String)> {
     let mut moves = Vec::new();
     for (id, path) in &filter.project_map {
         let encoded = encode_project_path(path);
         if encoded == *id {
             continue;
         }
-        let encoded_dir = repo_projects_dir.join(&encoded);
-        let has_encoded_copy = encoded_dir.is_dir();
+        let has_encoded_copy = repo_projects_dir.join(&encoded).is_dir();
         if !has_encoded_copy {
             continue;
         }
+        moves.push((encoded, id.clone()));
+    }
+    moves
+}
+
+pub fn move_into_mapped_ids(
+    filter: &FilterConfig,
+    repo_projects_dir: &Path,
+) -> Result<Vec<(String, String)>> {
+    let moves = pending_mapped_moves(filter, repo_projects_dir);
+    for (encoded, id) in &moves {
+        let encoded_dir = repo_projects_dir.join(encoded);
         move_files(&encoded_dir, &repo_projects_dir.join(id))?;
         std::fs::remove_dir_all(&encoded_dir)
             .with_context(|| format!("Failed to remove {}", encoded_dir.display()))?;
-        moves.push(format!("{encoded} → {id}"));
     }
     Ok(moves)
 }

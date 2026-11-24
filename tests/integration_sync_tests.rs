@@ -1,3 +1,5 @@
+mod common;
+
 use std::fs;
 use std::path::{Path, PathBuf};
 use tempfile::TempDir;
@@ -549,13 +551,30 @@ fn test_conflict_handling() {
     assert_eq!(conflict.session_id, session_id);
     assert_ne!(conflict.local_hash, conflict.remote_hash);
 
-    let renames = detector.resolve_all_keep_both().unwrap();
+    let renames: Vec<_> = detector
+        .conflicts_mut()
+        .iter_mut()
+        .map(|conflict| {
+            conflict
+                .resolve_keep_both("conflict-20250101-000000")
+                .unwrap()
+        })
+        .collect();
     assert_eq!(renames.len(), 1);
 
-    let (_original, renamed) = &renames[0];
+    let renamed = &renames[0];
 
     assert!(renamed.to_string_lossy().contains("conflict-"));
     assert!(renamed.to_string_lossy().contains(".jsonl"));
+    assert_eq!(
+        renamed.parent(),
+        m2_file.parent(),
+        "Remote copy must land next to the local transcript"
+    );
+    assert!(
+        !renamed.starts_with(&sync_projects),
+        "Remote copy must not be written into the sync repo"
+    );
 
     let remote_session = remote_sessions.first().unwrap();
     remote_session.copy_to(renamed).unwrap();
@@ -648,10 +667,8 @@ fn test_operation_history_tracking() {
         .unwrap();
     assert_eq!(last_pull.affected_conversations[0].session_id, "session-2");
 
-    let summary = last_op.summary();
-    assert!(summary.contains("push"));
-    assert!(summary.contains("main"));
-    assert!(summary.contains("1 conversations affected"));
+    assert_eq!(last_op.branch.as_deref(), Some("main"));
+    assert_eq!(last_op.affected_conversations.len(), 1);
 
     let stats = last_op.operation_stats();
     assert_eq!(stats.get(&SyncOperation::Modified), Some(&1));
@@ -849,4 +866,137 @@ fn test_operation_record_with_no_commit_hash() {
 
     record.commit_hash = Some("abc123".to_string());
     assert_eq!(record.commit_hash, Some("abc123".to_string()));
+}
+
+fn transcript(session_id: &str, uuids: &[&str]) -> String {
+    uuids
+        .iter()
+        .enumerate()
+        .map(|(minute, uuid)| {
+            format!(
+                "{{\"type\":\"user\",\"uuid\":\"{uuid}\",\"sessionId\":\"{session_id}\",\"timestamp\":\"2025-01-01T00:0{minute}:00Z\"}}\n"
+            )
+        })
+        .collect()
+}
+
+fn conflict_copies(project_dir: &Path) -> Vec<PathBuf> {
+    fs::read_dir(project_dir)
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .filter(|path| path.to_string_lossy().contains("-conflict-"))
+        .collect()
+}
+
+#[test]
+#[serial_test::serial]
+fn test_keep_both_saves_each_projects_own_remote_copy_once() {
+    use claude_code_sync::sync::pull_history;
+    use claude_code_sync::VerbosityLevel;
+
+    let root = TempDir::new().unwrap();
+    let repo_path = root.path().join("repo");
+    let claude = root.path().join("claude");
+    let config = root.path().join("cfg");
+    fs::create_dir_all(config.join("claude-code-sync")).unwrap();
+    let repo = GitRepo::init(&repo_path).unwrap();
+    let state = SyncState {
+        sync_repo_path: repo_path.clone(),
+        has_remote: false,
+        is_cloned_repo: false,
+    };
+    fs::write(
+        config.join("claude-code-sync/state.json"),
+        serde_json::to_string_pretty(&state).unwrap(),
+    )
+    .unwrap();
+    fs::write(
+        config.join("claude-code-sync/config.toml"),
+        toml::to_string_pretty(&common::every_project_filter()).unwrap(),
+    )
+    .unwrap();
+
+    let session_id = "agent-a1b2";
+    let projects: [(&str, &[&str]); 2] = [
+        ("-work-alpha", &["r1", "r2"]),
+        ("-work-beta", &["r1", "r2", "r3"]),
+    ];
+    for (project, remote_uuids) in projects {
+        let remote_file = repo_path
+            .join("projects")
+            .join(project)
+            .join(format!("{session_id}.jsonl"));
+        fs::create_dir_all(remote_file.parent().unwrap()).unwrap();
+        fs::write(&remote_file, transcript(session_id, remote_uuids)).unwrap();
+
+        let local_file = claude
+            .join("projects")
+            .join(project)
+            .join(format!("{session_id}.jsonl"));
+        fs::create_dir_all(local_file.parent().unwrap()).unwrap();
+        fs::write(&local_file, transcript(session_id, &["l1"])).unwrap();
+    }
+    repo.stage_all().unwrap();
+    repo.commit("remote transcripts").unwrap();
+
+    let _restore = common::EnvRestore::capture();
+    common::point_env_at(root.path(), &claude, &config);
+    for (project, _) in projects {
+        let local_file = claude
+            .join("projects")
+            .join(project)
+            .join(format!("{session_id}.jsonl"));
+        common::make_unmergeable_behind_the_summary_cache(&claude.join("projects"), &local_file);
+    }
+
+    pull_history(false, None, false, VerbosityLevel::Quiet).unwrap();
+
+    for (project, remote_uuids) in projects {
+        let copies = conflict_copies(&claude.join("projects").join(project));
+        assert_eq!(copies.len(), 1, "{project}: {copies:?}");
+        assert_eq!(
+            fs::read_to_string(&copies[0]).unwrap(),
+            transcript(session_id, remote_uuids),
+            "{project} must get its own remote version, not the other project's"
+        );
+    }
+
+    let history = OperationHistory::load().unwrap();
+    let last_pull = history
+        .get_last_operation_by_type(OperationType::Pull)
+        .unwrap();
+    let mut recorded_copies: Vec<(String, usize)> = last_pull
+        .affected_conversations
+        .iter()
+        .filter(|summary| summary.operation == SyncOperation::Conflict)
+        .map(|summary| {
+            let project = Path::new(&summary.project_path)
+                .parent()
+                .unwrap()
+                .to_string_lossy()
+                .to_string();
+            (project, summary.message_count)
+        })
+        .collect();
+    recorded_copies.sort();
+    assert_eq!(
+        recorded_copies,
+        vec![
+            ("-work-alpha".to_string(), 2),
+            ("-work-beta".to_string(), 3)
+        ],
+        "each copy is recorded with its own remote version"
+    );
+
+    std::thread::sleep(std::time::Duration::from_millis(1100));
+    pull_history(false, None, false, VerbosityLevel::Quiet).unwrap();
+
+    for (project, _) in projects {
+        let copies = conflict_copies(&claude.join("projects").join(project));
+        assert_eq!(
+            copies.len(),
+            1,
+            "{project}: a second pull must not save the same remote version again: {copies:?}"
+        );
+    }
 }

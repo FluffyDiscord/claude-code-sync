@@ -7,6 +7,8 @@ use std::path::{Path, PathBuf};
 
 use crate::config::ConfigManager;
 
+pub const INIT_CONFIG_FILE_NAME: &str = ".claude-code-sync-init.toml";
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct InitConfig {
     pub repo_path: String,
@@ -66,7 +68,7 @@ impl InitConfig {
         }
 
         if let Some(home) = dirs::home_dir() {
-            let home_config = home.join(".claude-code-sync-init.toml");
+            let home_config = home.join(INIT_CONFIG_FILE_NAME);
             if home_config.exists() {
                 log::info!("Loading init config from: {}", home_config.display());
                 return Ok(Some(Self::load(&home_config)?));

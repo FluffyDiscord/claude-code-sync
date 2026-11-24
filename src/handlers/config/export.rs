@@ -3,7 +3,7 @@ use colored::Colorize;
 use std::path::PathBuf;
 
 use crate::filter::FilterConfig;
-use crate::onboarding::InitConfig;
+use crate::onboarding::{InitConfig, INIT_CONFIG_FILE_NAME};
 use crate::sync::{MultiRepoState, SyncState};
 
 pub fn handle_config_export() -> Result<()> {
@@ -85,7 +85,7 @@ pub fn handle_config_export() -> Result<()> {
     let content =
         toml::to_string_pretty(&init_config).context("Failed to serialize init config")?;
 
-    let output_path = PathBuf::from("claude-code-sync-init.toml");
+    let output_path = PathBuf::from(INIT_CONFIG_FILE_NAME);
     std::fs::write(&output_path, content)
         .with_context(|| format!("Failed to write {}", output_path.display()))?;
 
@@ -178,7 +178,7 @@ mod tests {
         }
 
         fn exported_raw(&self) -> String {
-            let path = self.work_dir.path().join("claude-code-sync-init.toml");
+            let path = self.work_dir.path().join(INIT_CONFIG_FILE_NAME);
             assert!(path.exists(), "Exported file should exist");
             std::fs::read_to_string(&path).unwrap()
         }

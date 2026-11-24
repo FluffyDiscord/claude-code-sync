@@ -10,6 +10,59 @@ pub fn every_project_filter() -> claude_code_sync::filter::FilterConfig {
     }
 }
 
+const DIRECTORY_ENV_VARS: [&str; 3] = [
+    "HOME",
+    "CLAUDE_CODE_SYNC_CLAUDE_DIR",
+    "CLAUDE_CODE_SYNC_CONFIG_DIR",
+];
+
+pub struct EnvRestore {
+    saved: Vec<(&'static str, Option<String>)>,
+}
+
+impl EnvRestore {
+    pub fn capture() -> Self {
+        let saved = DIRECTORY_ENV_VARS
+            .iter()
+            .map(|name| (*name, std::env::var(name).ok()))
+            .collect();
+        Self { saved }
+    }
+}
+
+impl Drop for EnvRestore {
+    fn drop(&mut self) {
+        for (name, value) in &self.saved {
+            match value {
+                Some(value) => std::env::set_var(name, value),
+                None => std::env::remove_var(name),
+            }
+        }
+    }
+}
+
+pub fn point_env_at(home: &Path, claude: &Path, config: &Path) {
+    std::env::set_var("HOME", home);
+    std::env::set_var("CLAUDE_CODE_SYNC_CLAUDE_DIR", claude);
+    std::env::set_var("CLAUDE_CODE_SYNC_CONFIG_DIR", config);
+}
+
+pub fn make_unmergeable_behind_the_summary_cache(projects_dir: &Path, transcript: &Path) {
+    claude_code_sync::sync::discovery::discover_sessions(projects_dir, &every_project_filter())
+        .unwrap();
+    let metadata = std::fs::metadata(transcript).unwrap();
+    let modified = metadata.modified().unwrap();
+    let mut garbage = vec![b'x'; metadata.len() as usize - 1];
+    garbage.push(b'\n');
+    std::fs::write(transcript, garbage).unwrap();
+    std::fs::File::options()
+        .write(true)
+        .open(transcript)
+        .unwrap()
+        .set_modified(modified)
+        .unwrap();
+}
+
 pub struct ConfigEnv {
     temp_dir: TempDir,
 }

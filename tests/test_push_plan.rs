@@ -82,6 +82,31 @@ fn test_second_push_plan_is_all_unchanged_despite_shared_session_id() {
 
 #[test]
 #[serial]
+fn sessions_waiting_to_move_under_their_id_plan_as_unchanged() {
+    let _env = ConfigEnv::new();
+    let claude = TempDir::new().unwrap();
+    let repo_projects = TempDir::new().unwrap();
+    seed_claude_projects(claude.path());
+    let filter = common::every_project_filter();
+    let sessions = discover_sessions(claude.path(), &filter).unwrap();
+    let plan = plan_push(&sessions, claude.path(), repo_projects.path(), &filter).unwrap();
+    for entry in &plan.entries {
+        let dest = repo_projects.path().join(&entry.relative_path);
+        sessions[entry.session_index].copy_to(&dest).unwrap();
+    }
+
+    let mut mapped = filter.clone();
+    mapped
+        .project_map
+        .insert("myproj".to_string(), "/home/user/myproj".into());
+    let plan = plan_push(&sessions, claude.path(), repo_projects.path(), &mapped).unwrap();
+
+    assert_eq!(plan.added, 0, "the repo copies only change folder");
+    assert_eq!(plan.unchanged, 3);
+}
+
+#[test]
+#[serial]
 fn an_unchanged_session_is_left_in_the_repository_as_it_is() {
     let _env = ConfigEnv::new();
     let claude = TempDir::new().unwrap();

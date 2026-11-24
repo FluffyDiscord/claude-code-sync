@@ -1,4 +1,5 @@
 use anyhow::{anyhow, Context, Result};
+use std::collections::HashMap;
 use std::ffi::OsStr;
 use std::fs;
 use std::path::{Component, Path, PathBuf};
@@ -46,12 +47,19 @@ fn resolve_without_creating(path: &Path) -> Result<PathBuf> {
     Ok(resolved)
 }
 
+fn ensure_inside_base(path: &Path, target: &Path, allowed_base: &Path) -> Result<()> {
+    if target.starts_with(allowed_base) {
+        return Ok(());
+    }
+    Err(anyhow!(
+        "Security: Path traversal detected. Path {} is outside allowed directory {}",
+        path.display(),
+        allowed_base.display()
+    ))
+}
+
 impl Snapshot {
-    pub fn restore_with_base_and_snapshots(
-        &self,
-        allowed_base_dir: Option<&Path>,
-        snapshots_dir: Option<&Path>,
-    ) -> Result<()> {
+    pub fn restore_with_base(&self, allowed_base_dir: Option<&Path>) -> Result<()> {
         let allowed_base = if let Some(base) = allowed_base_dir {
             base.canonicalize().with_context(|| {
                 format!("Failed to canonicalize base directory: {}", base.display())
@@ -63,46 +71,37 @@ impl Snapshot {
                 .context("Failed to canonicalize home directory")?
         };
 
-        let all_files = self.reconstruct_full_state_with_dir(snapshots_dir)?;
-
-        for deleted_path in &self.deleted_files {
-            let path = PathBuf::from(deleted_path);
-
-            if let Ok(canonical) = path.canonicalize() {
-                if canonical.starts_with(&allowed_base) && path.exists() {
-                    fs::remove_file(&path)
-                        .with_context(|| format!("Failed to delete file: {}", path.display()))?;
-                }
-            }
+        let mut targets: HashMap<&str, PathBuf> = HashMap::new();
+        for path_str in self.deleted_files.iter().chain(self.files.keys()) {
+            let path = Path::new(path_str);
+            let target = resolve_without_creating(path)?;
+            ensure_inside_base(path, &target, &allowed_base)?;
+            targets.insert(path_str, target);
         }
 
-        for (path_str, content) in &all_files {
-            let path = PathBuf::from(path_str);
+        for path_str in self.list_files_changed_since_pull() {
+            eprintln!("Warning: Kept {path_str}: it changed after the pull");
+        }
 
-            let target = resolve_without_creating(&path)?;
+        for path_str in self.list_created_files_to_remove() {
+            fs::remove_file(&path_str)
+                .with_context(|| format!("Failed to delete file: {path_str}"))?;
+        }
 
-            if !target.starts_with(&allowed_base) {
-                return Err(anyhow!(
-                    "Security: Path traversal detected. Path {} is outside allowed directory {}",
-                    path.display(),
-                    allowed_base.display()
-                ));
-            }
+        for path_str in self.list_files_to_restore() {
+            let target = &targets[path_str.as_str()];
+            let content = &self.files[&path_str];
 
             if let Some(parent) = target.parent() {
                 fs::create_dir_all(parent)
                     .with_context(|| format!("Failed to create directory: {}", parent.display()))?;
             }
 
-            fs::write(&target, content)
+            fs::write(target, content)
                 .with_context(|| format!("Failed to restore file: {}", target.display()))?;
         }
 
         Ok(())
-    }
-
-    pub fn restore_with_base(&self, allowed_base_dir: Option<&Path>) -> Result<()> {
-        self.restore_with_base_and_snapshots(allowed_base_dir, None)
     }
 
     pub fn restore(&self) -> Result<()> {
@@ -189,46 +188,6 @@ mod tests {
     }
 
     #[test]
-    fn test_differential_snapshot_restore_with_deletions() {
-        let temp_dir = tempdir().unwrap();
-        let snapshots_dir = temp_dir.path().join("snapshots");
-        let file1 = temp_dir.path().join("file1.txt");
-        let file2 = temp_dir.path().join("file2.txt");
-
-        fs::write(&file1, b"content1").unwrap();
-        fs::write(&file2, b"content2").unwrap();
-
-        let snapshot1 = Snapshot::create_differential_with_dir(
-            OperationType::Pull,
-            vec![&file1, &file2],
-            None,
-            Some(&snapshots_dir),
-        )
-        .unwrap();
-        snapshot1.save_to_disk(Some(&snapshots_dir)).unwrap();
-
-        fs::remove_file(&file2).unwrap();
-
-        let snapshot2 = Snapshot::create_differential_with_dir(
-            OperationType::Pull,
-            vec![&file1],
-            None,
-            Some(&snapshots_dir),
-        )
-        .unwrap();
-        snapshot2.save_to_disk(Some(&snapshots_dir)).unwrap();
-
-        fs::write(&file2, b"should_be_deleted").unwrap();
-
-        snapshot2
-            .restore_with_base_and_snapshots(Some(temp_dir.path()), Some(&snapshots_dir))
-            .unwrap();
-
-        assert!(file1.exists(), "file1 should exist after restore");
-        assert!(!file2.exists(), "file2 should be deleted after restore");
-    }
-
-    #[test]
     fn test_restore_rejects_traversal_without_creating_anything() {
         let temp_dir = tempdir().unwrap();
         let allowed = temp_dir.path().join("allowed");
@@ -263,6 +222,61 @@ mod tests {
         assert!(
             !outside.parent().unwrap().exists(),
             "the rejected file's parent directories must not be created either"
+        );
+    }
+
+    #[test]
+    fn test_restore_rejects_a_deletion_outside_the_base() {
+        let temp_dir = tempdir().unwrap();
+        let allowed = temp_dir.path().join("allowed");
+        fs::create_dir_all(&allowed).unwrap();
+        let outside = create_test_file(temp_dir.path(), "outside.txt", "keep me");
+
+        let mut snapshot = metadata_only_snapshot(
+            &Uuid::new_v4().to_string(),
+            OperationType::Pull,
+            Duration::zero(),
+        );
+        snapshot
+            .deleted_files
+            .push(outside.to_string_lossy().to_string());
+
+        let err = snapshot
+            .restore_with_base(Some(&allowed))
+            .expect_err("restore must reject a deletion outside the allowed base")
+            .to_string();
+        assert!(err.contains("Security"), "unexpected error: {err}");
+        assert!(outside.exists());
+    }
+
+    #[test]
+    fn test_restore_checks_every_path_before_deleting_anything() {
+        let temp_dir = tempdir().unwrap();
+        let allowed = temp_dir.path().join("allowed");
+        fs::create_dir_all(&allowed).unwrap();
+        let created = create_test_file(&allowed, "created.txt", "pulled");
+        let outside = temp_dir.path().join("outside.txt");
+
+        let mut snapshot = metadata_only_snapshot(
+            &Uuid::new_v4().to_string(),
+            OperationType::Pull,
+            Duration::zero(),
+        );
+        snapshot
+            .deleted_files
+            .push(created.to_string_lossy().to_string());
+        snapshot
+            .files
+            .insert(outside.to_string_lossy().to_string(), b"old".to_vec());
+
+        let err = snapshot
+            .restore_with_base(Some(&allowed))
+            .expect_err("restore must reject a path outside the allowed base")
+            .to_string();
+        assert!(err.contains("Security"), "unexpected error: {err}");
+        assert!(
+            created.exists(),
+            "a rejected restore must not delete anything first"
         );
     }
 

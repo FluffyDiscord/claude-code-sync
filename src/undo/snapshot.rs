@@ -25,11 +25,19 @@ pub struct Snapshot {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub branch: Option<String>,
 
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub base_snapshot_id: Option<String>,
-
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub deleted_files: Vec<String>,
+
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub written_hashes: HashMap<String, String>,
+}
+
+fn read_hash(path: &str) -> Result<Option<String>> {
+    match fs::read(path) {
+        Ok(content) => Ok(Some(crate::artifacts::tracked::hash_content(&content))),
+        Err(_) if !Path::new(path).exists() => Ok(None),
+        Err(e) => Err(e).with_context(|| format!("Failed to read {path}")),
+    }
 }
 
 mod base64_map {
@@ -105,9 +113,64 @@ impl Snapshot {
             git_commit_hash: commit_hash.map(|s| s.to_string()),
             files,
             branch: None,
-            base_snapshot_id: None,
             deleted_files: Vec::new(),
+            written_hashes: HashMap::new(),
         })
+    }
+
+    pub fn record_pull_result<I>(&mut self, created_paths: I) -> Result<()>
+    where
+        I: IntoIterator<Item = String>,
+    {
+        let saved_paths: Vec<String> = self.files.keys().cloned().collect();
+        for path in saved_paths {
+            if let Some(hash) = read_hash(&path)? {
+                self.written_hashes.insert(path, hash);
+            }
+        }
+        for path in created_paths {
+            if let Some(hash) = read_hash(&path)? {
+                self.written_hashes.insert(path.clone(), hash);
+                self.deleted_files.push(path);
+            }
+        }
+        Ok(())
+    }
+
+    pub fn list_files_to_restore(&self) -> Vec<String> {
+        self.files
+            .keys()
+            .filter(|path| !self.has_changed_since_pull(path))
+            .cloned()
+            .collect()
+    }
+
+    pub fn list_created_files_to_remove(&self) -> Vec<String> {
+        self.deleted_files
+            .iter()
+            .filter(|path| Path::new(path).exists())
+            .filter(|path| !self.has_changed_since_pull(path))
+            .cloned()
+            .collect()
+    }
+
+    pub fn list_files_changed_since_pull(&self) -> Vec<String> {
+        self.files
+            .keys()
+            .chain(self.deleted_files.iter())
+            .filter(|path| self.has_changed_since_pull(path))
+            .cloned()
+            .collect()
+    }
+
+    fn has_changed_since_pull(&self, path: &str) -> bool {
+        let Some(written_hash) = self.written_hashes.get(path) else {
+            return false;
+        };
+        let Ok(Some(current_hash)) = read_hash(path) else {
+            return false;
+        };
+        current_hash != *written_hash
     }
 
     pub fn save_to_disk(&self, custom_path: Option<&Path>) -> Result<PathBuf> {
@@ -137,15 +200,9 @@ impl Snapshot {
         })?;
 
         let size_mb = json.len() as f64 / (1024.0 * 1024.0);
-        let snapshot_type = if self.base_snapshot_id.is_some() {
-            "differential"
-        } else {
-            "full"
-        };
 
         log::debug!(
-            "Created {} snapshot: {} ({:.1} MB, {} files)",
-            snapshot_type,
+            "Created snapshot: {} ({:.1} MB, {} files)",
             self.snapshot_id,
             size_mb,
             self.files.len()
@@ -195,13 +252,6 @@ impl Snapshot {
         })?;
 
         println!("    {} {} files", "Contains".dimmed(), snapshot.files.len());
-
-        if snapshot.files.len() > 1000 {
-            println!(
-                "    {} Large number of files - this is a full (non-differential) snapshot",
-                "Note:".yellow()
-            );
-        }
 
         Ok(snapshot)
     }

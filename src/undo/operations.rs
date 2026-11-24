@@ -37,17 +37,18 @@ pub fn undo_pull(history_path: Option<PathBuf>, allowed_base_dir: Option<&Path>)
         ));
     }
 
-    let restored_files: Vec<String> = snapshot.files.keys().cloned().collect();
-    let file_count = restored_files.len();
+    let restored_count = snapshot.list_files_to_restore().len();
+    let removed_count = snapshot.list_created_files_to_remove().len();
+    let kept_count = snapshot.list_files_changed_since_pull().len();
+
+    snapshot
+        .restore_with_base(allowed_base_dir)
+        .context("Failed to restore snapshot")?;
 
     let mut history = OperationHistory::from_path(history_path.clone())?;
     history
         .remove_last_operation_by_type(OperationType::Pull, history_path.clone())
         .context("Failed to remove pull operation from history")?;
-
-    snapshot
-        .restore_with_base(allowed_base_dir)
-        .context("Failed to restore snapshot")?;
 
     if let Err(e) = fs::remove_file(snapshot_path) {
         eprintln!(
@@ -60,8 +61,12 @@ pub fn undo_pull(history_path: Option<PathBuf>, allowed_base_dir: Option<&Path>)
     Ok(format!(
         "Successfully undone last pull operation.\n\
         Restored {} files to their pre-pull state.\n\
+        Removed {} files the pull created.\n\
+        Kept {} files changed after the pull.\n\
         Snapshot taken at: {}",
-        file_count,
+        restored_count,
+        removed_count,
+        kept_count,
         snapshot.timestamp.format("%Y-%m-%d %H:%M:%S UTC")
     ))
 }
@@ -98,13 +103,13 @@ pub fn undo_push(repo_path: &Path, history_path: Option<PathBuf>) -> Result<Stri
     let branch_name = last_push.branch.as_deref().unwrap_or("unknown");
     let needs_force_push = repo.has_remote("origin");
 
+    repo.reset_soft(&target_commit)
+        .context("Failed to reset repository to previous commit")?;
+
     let mut history = OperationHistory::from_path(history_path.clone())?;
     history
         .remove_last_operation_by_type(OperationType::Push, history_path.clone())
         .context("Failed to remove push operation from history")?;
-
-    repo.reset_soft(&target_commit)
-        .context("Failed to reset repository to previous commit")?;
 
     if let Ok(claude_dir) = crate::sync::discovery::claude_home_dir() {
         if let Err(e) = crate::artifacts::tracked::forget(&claude_dir, repo_path) {
@@ -363,93 +368,64 @@ mod tests {
     }
 
     #[test]
-    fn test_undo_pull_transaction_safety() {
+    fn test_failed_undo_pull_keeps_the_operation_for_a_retry() {
         let temp_dir = tempdir().unwrap();
+        let allowed_base = temp_dir.path().join("claude");
+        fs::create_dir_all(&allowed_base).unwrap();
         let history_path = temp_dir.path().join("history.json");
         let snapshots_dir = temp_dir.path().join("snapshots");
 
-        let file1 = create_test_file(temp_dir.path(), "conversation.jsonl", "original");
-
-        let snapshot = Snapshot::create(OperationType::Pull, vec![&file1], None).unwrap();
+        let outside_base = create_test_file(temp_dir.path(), "conversation.jsonl", "original");
+        let snapshot = Snapshot::create(OperationType::Pull, vec![&outside_base], None).unwrap();
         let snapshot_path = snapshot.save_to_disk(Some(&snapshots_dir)).unwrap();
 
         HistoryBuilder::new(&history_path)
             .push(OperationType::Pull, "main", Some(&snapshot_path))
             .save();
-        assert_eq!(operation_count(&history_path), 1);
 
-        fs::write(&file1, "modified by pull").unwrap();
+        let result = undo_pull(Some(history_path.clone()), Some(&allowed_base));
 
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let mut perms = fs::metadata(&file1).unwrap().permissions();
-            perms.set_mode(0o444);
-            fs::set_permissions(&file1, perms).unwrap();
-        }
-
-        let result = undo_pull(Some(history_path.clone()), Some(temp_dir.path()));
-
+        assert!(result.is_err(), "restore outside the base must fail");
         assert_eq!(
             operation_count(&history_path),
-            0,
-            "History should be updated even if file restoration fails"
+            1,
+            "a failed undo must leave the pull in history so it can be retried"
         );
-
-        if result.is_ok() {
-            assert!(
-                !snapshot_path.exists(),
-                "Snapshot should be cleaned up on success"
-            );
-        }
-
-        #[cfg(unix)]
-        if file1.exists() {
-            use std::os::unix::fs::PermissionsExt;
-            let mut perms = fs::metadata(&file1).unwrap().permissions();
-            perms.set_mode(0o644);
-            let _ = fs::set_permissions(&file1, perms);
-        }
+        assert!(
+            snapshot_path.exists(),
+            "a failed undo must keep its snapshot"
+        );
     }
 
     #[test]
-    fn test_undo_push_transaction_safety() {
-        let (temp_dir, repo) = setup_test_repo();
+    fn test_failed_undo_push_keeps_the_operation_for_a_retry() {
+        let (temp_dir, _repo) = setup_test_repo();
         let history_path = temp_dir.path().join("history.json");
         let snapshots_dir = temp_dir.path().join("snapshots");
 
-        let initial_hash = repo.current_commit_hash().unwrap();
-
-        let new_file = temp_dir.path().join("new.txt");
-        fs::write(&new_file, "new content").unwrap();
-        repo.stage_all().unwrap();
-        repo.commit("Second commit").unwrap();
-
-        let mut snapshot =
-            Snapshot::create(OperationType::Push, vec![&new_file], Some(&initial_hash)).unwrap();
-        snapshot.git_commit_hash = Some(initial_hash.clone());
+        let mut snapshot = metadata_only_snapshot(
+            &Uuid::new_v4().to_string(),
+            OperationType::Push,
+            Duration::zero(),
+        );
+        snapshot.git_commit_hash = Some("0123456789abcdef0123456789abcdef01234567".to_string());
         let snapshot_path = snapshot.save_to_disk(Some(&snapshots_dir)).unwrap();
 
         HistoryBuilder::new(&history_path)
             .push(OperationType::Push, "master", Some(&snapshot_path))
             .save();
-        assert_eq!(operation_count(&history_path), 1);
 
         let result = undo_push(temp_dir.path(), Some(history_path.clone()));
 
+        assert!(result.is_err(), "reset to a missing commit must fail");
         assert_eq!(
             operation_count(&history_path),
-            0,
-            "History should be updated even if git reset fails"
+            1,
+            "a failed undo must leave the push in history so it can be retried"
         );
-
-        if result.is_ok() {
-            let repo_check = GitRepo::open(temp_dir.path()).unwrap();
-            assert_eq!(repo_check.current_commit_hash().unwrap(), initial_hash);
-            assert!(
-                !snapshot_path.exists(),
-                "Snapshot should be cleaned up on success"
-            );
-        }
+        assert!(
+            snapshot_path.exists(),
+            "a failed undo must keep its snapshot"
+        );
     }
 }

@@ -1,5 +1,4 @@
 mod cleanup;
-mod differential;
 mod operations;
 mod preview;
 mod restore;

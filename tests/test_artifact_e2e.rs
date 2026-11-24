@@ -10,6 +10,7 @@ use claude_code_sync::filter::FilterConfig;
 use claude_code_sync::history::OperationHistory;
 use claude_code_sync::sync::{pull_history, push_history, sync_bidirectional, SyncState};
 use claude_code_sync::VerbosityLevel;
+use common::EnvRestore;
 use serial_test::serial;
 use tempfile::TempDir;
 
@@ -56,9 +57,7 @@ impl Machine {
     }
 
     fn activate(&self) {
-        std::env::set_var("HOME", &self.home);
-        std::env::set_var("CLAUDE_CODE_SYNC_CLAUDE_DIR", self.home.join(".claude"));
-        std::env::set_var("CLAUDE_CODE_SYNC_CONFIG_DIR", &self.config);
+        common::point_env_at(&self.home, &self.claude(), &self.config);
     }
 
     fn claude(&self) -> PathBuf {
@@ -84,39 +83,6 @@ impl Machine {
             toml::to_string_pretty(filter).unwrap(),
         )
         .unwrap();
-    }
-}
-
-struct EnvRestore {
-    home: Option<String>,
-    claude: Option<String>,
-    cfg: Option<String>,
-}
-
-impl EnvRestore {
-    fn capture() -> Self {
-        Self {
-            home: std::env::var("HOME").ok(),
-            claude: std::env::var("CLAUDE_CODE_SYNC_CLAUDE_DIR").ok(),
-            cfg: std::env::var("CLAUDE_CODE_SYNC_CONFIG_DIR").ok(),
-        }
-    }
-}
-
-impl Drop for EnvRestore {
-    fn drop(&mut self) {
-        match &self.home {
-            Some(v) => std::env::set_var("HOME", v),
-            None => std::env::remove_var("HOME"),
-        }
-        match &self.claude {
-            Some(v) => std::env::set_var("CLAUDE_CODE_SYNC_CLAUDE_DIR", v),
-            None => std::env::remove_var("CLAUDE_CODE_SYNC_CLAUDE_DIR"),
-        }
-        match &self.cfg {
-            Some(v) => std::env::set_var("CLAUDE_CODE_SYNC_CONFIG_DIR", v),
-            None => std::env::remove_var("CLAUDE_CODE_SYNC_CONFIG_DIR"),
-        }
     }
 }
 
@@ -216,6 +182,18 @@ fn test_full_pipeline_push_pull_undo_across_two_machines() {
     assert!(b.join("history.jsonl").is_file());
     assert!(!b.join(".credentials.json").exists());
 
+    let pulled_transcript = b.join(PULLED_TRANSCRIPT);
+    assert!(pulled_transcript.is_file());
+    let preview = claude_code_sync::undo::preview_undo_pull(None).unwrap();
+    assert!(
+        preview
+            .files_to_delete
+            .iter()
+            .any(|file| file.ends_with("aaaa-1111.jsonl")),
+        "the preview lists the transcript undo will remove: {:?}",
+        preview.files_to_delete
+    );
+
     let summary = claude_code_sync::undo::undo_pull(None, Some(&machine_b.home)).unwrap();
     assert!(summary.contains("undone"), "undo summary: {summary}");
     assert!(
@@ -224,9 +202,198 @@ fn test_full_pipeline_push_pull_undo_across_two_machines() {
     );
     assert!(!b.join("skills/deploy/SKILL.md").exists());
     assert!(!b.join("CLAUDE.md").exists());
+    assert!(
+        !pulled_transcript.exists(),
+        "the transcript the pull added is removed"
+    );
 
     pull_history(false, None, false, VerbosityLevel::Quiet).unwrap();
     assert!(b.join("settings.json").is_file());
+}
+
+const PULLED_TRANSCRIPT: &str = "projects/-home-user-webapp/aaaa-1111.jsonl";
+const REMOTE_TRANSCRIPT: &str = "{\"type\":\"user\",\"sessionId\":\"aaaa-1111\",\"uuid\":\"u1\",\"timestamp\":\"2025-01-01T00:00:00Z\",\"cwd\":\"/home/user/webapp\"}\n";
+const LOCAL_TRANSCRIPT: &str = "{\"type\":\"user\",\"sessionId\":\"aaaa-1111\",\"uuid\":\"u2\",\"timestamp\":\"2025-01-02T00:00:00Z\",\"cwd\":\"/home/user/webapp\"}\n";
+
+fn push_transcript_from_another_machine(repo: &Path) {
+    let machine = Machine::new(repo);
+    machine.activate();
+    write_transcript(&machine, REMOTE_TRANSCRIPT);
+    push_history(
+        Some("from another machine"),
+        false,
+        None,
+        false,
+        false,
+        VerbosityLevel::Quiet,
+    )
+    .unwrap();
+}
+
+fn write_transcript(machine: &Machine, content: &str) -> PathBuf {
+    let path = machine.claude().join(PULLED_TRANSCRIPT);
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    fs::write(&path, content).unwrap();
+    path
+}
+
+#[test]
+#[serial]
+fn test_undo_pull_keeps_a_pulled_transcript_continued_after_the_pull() {
+    let _restore = EnvRestore::capture();
+    let repo = TempDir::new().unwrap();
+    init_git_repo(repo.path());
+    push_transcript_from_another_machine(repo.path());
+
+    let machine = Machine::new(repo.path());
+    machine.activate();
+    pull_history(false, None, false, VerbosityLevel::Quiet).unwrap();
+    let continued = format!("{REMOTE_TRANSCRIPT}{LOCAL_TRANSCRIPT}");
+    let pulled = write_transcript(&machine, &continued);
+
+    let undo = claude_code_sync::undo::undo_pull(None, Some(&machine.home));
+
+    assert!(
+        pulled.is_file(),
+        "a transcript continued after the pull survives undo; undo returned {undo:?}"
+    );
+    assert_eq!(fs::read_to_string(&pulled).unwrap(), continued);
+    assert!(undo.is_ok(), "undo pull failed: {undo:?}");
+}
+
+#[test]
+#[serial]
+fn test_undo_pull_removes_the_remote_copy_saved_beside_a_conflict() {
+    let _restore = EnvRestore::capture();
+    let repo = TempDir::new().unwrap();
+    init_git_repo(repo.path());
+    push_transcript_from_another_machine(repo.path());
+
+    let machine = Machine::new(repo.path());
+    machine.activate();
+    let local = write_transcript(&machine, LOCAL_TRANSCRIPT);
+    common::make_unmergeable_behind_the_summary_cache(&machine.claude().join("projects"), &local);
+    let unmergeable = fs::read(&local).unwrap();
+
+    pull_history(false, None, false, VerbosityLevel::Quiet).unwrap();
+    let copies: Vec<PathBuf> = fs::read_dir(local.parent().unwrap())
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .filter(|path| path.to_string_lossy().contains("-conflict-"))
+        .collect();
+    assert_eq!(copies.len(), 1, "the pull saves the remote copy beside");
+
+    let undo = claude_code_sync::undo::undo_pull(None, Some(&machine.home));
+
+    assert!(
+        !copies[0].exists(),
+        "undo pull removes the remote copy; undo returned {undo:?}"
+    );
+    assert_eq!(fs::read(&local).unwrap(), unmergeable);
+    assert!(undo.is_ok(), "undo pull failed: {undo:?}");
+}
+
+#[test]
+#[serial]
+fn test_undo_pull_keeps_a_merged_transcript_continued_after_the_pull() {
+    let _restore = EnvRestore::capture();
+    let repo = TempDir::new().unwrap();
+    init_git_repo(repo.path());
+    push_transcript_from_another_machine(repo.path());
+
+    let machine = Machine::new(repo.path());
+    machine.activate();
+    let local = write_transcript(&machine, LOCAL_TRANSCRIPT);
+    pull_history(false, None, false, VerbosityLevel::Quiet).unwrap();
+    let merged = fs::read_to_string(&local).unwrap();
+    assert_ne!(
+        merged, LOCAL_TRANSCRIPT,
+        "the pull merges the remote version in"
+    );
+    let continued = format!("{merged}{}", LOCAL_TRANSCRIPT.replace("u2", "u3"));
+    fs::write(&local, &continued).unwrap();
+    let preview = claude_code_sync::undo::preview_undo_pull(None).unwrap();
+    assert_eq!(
+        preview.files_changed_since_pull,
+        vec![local.to_string_lossy().to_string()],
+        "the preview lists the transcript undo will keep"
+    );
+
+    let undo = claude_code_sync::undo::undo_pull(None, Some(&machine.home));
+
+    assert_eq!(
+        fs::read_to_string(&local).unwrap(),
+        continued,
+        "a merged transcript continued after the pull survives undo; undo returned {undo:?}"
+    );
+    assert!(undo.is_ok(), "undo pull failed: {undo:?}");
+}
+
+#[test]
+#[serial]
+fn test_undo_pull_after_a_failed_pull_removes_what_it_wrote() {
+    let _restore = EnvRestore::capture();
+    let repo = TempDir::new().unwrap();
+    init_git_repo(repo.path());
+    let other = Machine::new(repo.path());
+    other.activate();
+    write_transcript(&other, REMOTE_TRANSCRIPT);
+    fs::create_dir_all(other.claude().join("skills/deploy")).unwrap();
+    fs::write(other.claude().join("skills/deploy/SKILL.md"), b"# deploy\n").unwrap();
+    push_history(
+        Some("from another machine"),
+        false,
+        None,
+        false,
+        false,
+        VerbosityLevel::Quiet,
+    )
+    .unwrap();
+
+    let machine = Machine::new(repo.path());
+    machine.activate();
+    let skills_blocker = machine.claude().join("skills");
+    fs::write(&skills_blocker, b"a file where the skills directory goes").unwrap();
+
+    let pulled = pull_history(false, None, false, VerbosityLevel::Quiet);
+    assert!(pulled.is_err(), "the skill can't be written under a file");
+    let transcript = machine.claude().join(PULLED_TRANSCRIPT);
+    assert!(transcript.is_file(), "the pull wrote the transcript first");
+
+    let undo = claude_code_sync::undo::undo_pull(None, Some(&machine.home));
+
+    assert!(
+        !transcript.exists(),
+        "undo removes what the failed pull wrote; undo returned {undo:?}"
+    );
+    assert!(undo.is_ok(), "undo pull failed: {undo:?}");
+    assert!(skills_blocker.is_file());
+}
+
+#[test]
+#[serial]
+fn test_undo_pull_restores_a_local_file_discovery_skipped() {
+    let _restore = EnvRestore::capture();
+    let repo = TempDir::new().unwrap();
+    init_git_repo(repo.path());
+    push_transcript_from_another_machine(repo.path());
+
+    let machine = Machine::new(repo.path());
+    machine.activate();
+    let unparseable = "not a transcript\n";
+    let local = write_transcript(&machine, unparseable);
+
+    pull_history(false, None, false, VerbosityLevel::Quiet).unwrap();
+    assert_eq!(fs::read_to_string(&local).unwrap(), REMOTE_TRANSCRIPT);
+
+    let undo = claude_code_sync::undo::undo_pull(None, Some(&machine.home));
+
+    assert_eq!(
+        fs::read_to_string(&local).unwrap(),
+        unparseable,
+        "undo pull restores the file the pull overwrote; undo returned {undo:?}"
+    );
+    assert!(undo.is_ok(), "undo pull failed: {undo:?}");
 }
 
 #[test]
@@ -674,5 +841,137 @@ fn test_pull_warns_once_for_a_project_this_machine_never_mapped() {
         lines_about_unplaceable_files(&warnings).len(),
         3,
         "warn_each_skipped_file restores the line per file: {warnings:?}"
+    );
+}
+
+fn count_push_operations() -> usize {
+    OperationHistory::load()
+        .unwrap()
+        .list_operations()
+        .iter()
+        .filter(|op| op.operation_type == claude_code_sync::history::OperationType::Push)
+        .count()
+}
+
+#[test]
+#[serial]
+fn test_answering_no_to_push_leaves_the_repo_and_tracked_record_untouched() {
+    let _restore = EnvRestore::capture();
+    let repo = TempDir::new().unwrap();
+    init_git_repo(repo.path());
+    let machine = Machine::new(repo.path());
+    machine.activate();
+    let claude = machine.claude();
+    seed_full_claude_home(&claude);
+    push_history(
+        Some("first"),
+        false,
+        None,
+        false,
+        false,
+        VerbosityLevel::Quiet,
+    )
+    .unwrap();
+    let record = claude_code_sync::artifacts::tracked::record_path(&claude);
+    let record_before = fs::read(&record).unwrap();
+
+    fs::write(claude.join("settings.json"), b"{\"model\":\"sonnet\"}").unwrap();
+    fs::remove_file(claude.join("skills/deploy/SKILL.md")).unwrap();
+    fs::write(
+        claude.join("projects/-home-user-webapp/eeee-5555.jsonl"),
+        "{\"type\":\"user\",\"sessionId\":\"eeee-5555\",\"uuid\":\"u5\",\"timestamp\":\"2025-01-05T00:00:00Z\",\"cwd\":\"/home/user/webapp\"}\n",
+    )
+    .unwrap();
+    let report = claude_code_sync::sync::push::push_history_with_confirmation(
+        Some("declined"),
+        false,
+        None,
+        false,
+        Some(|| Ok(false)),
+        VerbosityLevel::Quiet,
+    )
+    .unwrap();
+
+    assert_eq!(report.added, 0, "a declined push reports nothing pushed");
+    let status = git(
+        repo.path(),
+        &["status", "--porcelain", "--untracked-files=all"],
+    );
+    assert_eq!(status, "", "a declined push leaves the repo as it was");
+    assert_eq!(
+        fs::read(&record).unwrap(),
+        record_before,
+        "a declined push leaves the tracked record as it was"
+    );
+    assert_eq!(
+        count_push_operations(),
+        1,
+        "a declined push records no operation"
+    );
+}
+
+#[test]
+#[serial]
+fn test_rejected_remote_push_fails_the_sync_after_committing_locally() {
+    let _restore = EnvRestore::capture();
+    let root = TempDir::new().unwrap();
+    let origin = root.path().join("origin.git");
+    fs::create_dir_all(&origin).unwrap();
+    git(&origin, &["init", "--quiet", "--bare", "-b", "main"]);
+    let repo = root.path().join("a");
+    init_git_repo(&repo);
+    git(&repo, &["symbolic-ref", "HEAD", "refs/heads/main"]);
+    git(
+        &repo,
+        &["remote", "add", "origin", &origin.to_string_lossy()],
+    );
+    let machine = Machine::new(&repo);
+    machine.use_remote(&repo);
+    machine.activate();
+    let claude = machine.claude();
+    seed_full_claude_home(&claude);
+    push_history(
+        Some("first"),
+        true,
+        None,
+        false,
+        false,
+        VerbosityLevel::Quiet,
+    )
+    .unwrap();
+
+    let hook = origin.join("hooks/pre-receive");
+    fs::write(&hook, "#!/bin/sh\nexit 1\n").unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&hook, fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    fs::write(claude.join("settings.json"), b"{\"model\":\"sonnet\"}").unwrap();
+    let synced = sync_bidirectional(Some("rejected"), None, false, false, VerbosityLevel::Quiet);
+
+    let error = format!("{:#}", synced.expect_err("a rejected push fails the sync"));
+    assert!(error.contains("pushing to origin/"), "{error}");
+    let local_head = git(&repo, &["rev-parse", "HEAD"]);
+    assert_ne!(git(&origin, &["rev-parse", "main"]), local_head);
+    let log = git(&repo, &["log", "--oneline"]);
+    assert_eq!(log.lines().count(), 2, "the local commit stays: {log}");
+    assert_eq!(count_push_operations(), 2, "the push is recorded for undo");
+
+    fs::remove_file(&hook).unwrap();
+    push_history(
+        Some("retry"),
+        true,
+        None,
+        false,
+        false,
+        VerbosityLevel::Quiet,
+    )
+    .unwrap();
+
+    assert_eq!(
+        git(&origin, &["rev-parse", "main"]),
+        local_head,
+        "a push with nothing new still sends the commit the remote rejected"
     );
 }

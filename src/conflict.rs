@@ -26,6 +26,9 @@ pub struct Conflict {
     pub remote_hash: String,
 
     pub resolution: ConflictResolution,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub merge_error: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -54,6 +57,7 @@ impl Conflict {
             local_hash: local.content_hash().to_string(),
             remote_hash: remote.content_hash().to_string(),
             resolution: ConflictResolution::Pending,
+            merge_error: None,
         }
     }
 
@@ -79,36 +83,22 @@ impl Conflict {
         Ok(())
     }
 
-    pub fn preview_smart_merge(
-        &mut self,
-        local_session: &ConversationSession,
-        remote_session: &ConversationSession,
-    ) -> Result<()> {
-        let merge_result = merge::merge_conversations(local_session, remote_session)?;
-
-        self.resolution = ConflictResolution::SmartMerge {
-            stats: merge_result.stats,
-        };
-
-        Ok(())
-    }
-
     pub fn resolve_keep_both(&mut self, conflict_suffix: &str) -> Result<PathBuf> {
-        let remote_file_name = self
-            .remote_file
+        let local_file_name = self
+            .local_file
             .file_stem()
             .and_then(|s| s.to_str())
             .unwrap_or("unknown");
 
-        let remote_file_ext = self
-            .remote_file
+        let local_file_ext = self
+            .local_file
             .extension()
             .and_then(|s| s.to_str())
             .unwrap_or("jsonl");
 
-        let parent = self.remote_file.parent().unwrap_or_else(|| Path::new("."));
+        let parent = self.local_file.parent().unwrap_or_else(|| Path::new("."));
 
-        let new_name = format!("{remote_file_name}-{conflict_suffix}.{remote_file_ext}");
+        let new_name = format!("{local_file_name}-{conflict_suffix}.{local_file_ext}");
         let renamed_path = parent.join(new_name);
 
         self.resolution = ConflictResolution::KeepBoth {
@@ -156,21 +146,6 @@ impl ConflictDetector {
                 self.conflicts.push(conflict);
             }
         }
-    }
-
-    #[allow(dead_code)]
-    pub fn resolve_all_keep_both(&mut self) -> Result<Vec<(PathBuf, PathBuf)>> {
-        let mut renames = Vec::new();
-
-        for conflict in &mut self.conflicts {
-            let timestamp = chrono::Utc::now().format("%Y%m%d-%H%M%S");
-            let conflict_suffix = format!("conflict-{timestamp}");
-
-            let renamed_path = conflict.resolve_keep_both(&conflict_suffix)?;
-            renames.push((conflict.remote_file.clone(), renamed_path));
-        }
-
-        Ok(renames)
     }
 
     pub fn conflicts(&self) -> &[Conflict] {

@@ -124,15 +124,6 @@ impl ArtifactReport {
             path: path.to_path_buf(),
         });
     }
-
-    #[allow(dead_code)]
-    pub fn is_empty(&self) -> bool {
-        self.counts.is_empty()
-            || self
-                .counts
-                .iter()
-                .all(|c| c.added + c.modified + c.unchanged + c.skipped == 0)
-    }
 }
 
 struct CollectedFile {
@@ -328,6 +319,29 @@ pub fn push_artifacts(
     repo_root: &Path,
     filter: &FilterConfig,
 ) -> Result<ArtifactReport> {
+    compare_or_push_artifacts(claude_dir, repo_root, filter, true)
+}
+
+pub fn preview_push_artifacts(
+    claude_dir: &Path,
+    repo_root: &Path,
+    filter: &FilterConfig,
+) -> Result<ArtifactReport> {
+    compare_or_push_artifacts(claude_dir, repo_root, filter, false)
+}
+
+fn compare_or_push_artifacts(
+    claude_dir: &Path,
+    repo_root: &Path,
+    filter: &FilterConfig,
+    writes: bool,
+) -> Result<ArtifactReport> {
+    let write = |dest: &Path, content: &[u8], mode_source: &Path| -> Result<()> {
+        if !writes {
+            return Ok(());
+        }
+        write_atomic(dest, content, mode_source)
+    };
     let mut report = ArtifactReport::default();
     let tokens = PathTokens::for_claude_dir(claude_dir);
     let tracked_before = load_tracked(claude_dir, repo_root, filter);
@@ -355,7 +369,8 @@ pub fn push_artifacts(
                 .filter_map(|rel| repo_relative(repo_root, &category_root.join(rel)))
                 .collect();
             if source_is_present(desc, claude_dir) {
-                if desc.dest == DestRoot::Artifacts {
+                let is_artifacts_category = desc.dest == DestRoot::Artifacts;
+                if writes && is_artifacts_category {
                     mark_category_synced(&category_root)?;
                 }
                 pushed.extend(tracked_in_projects_missing_here(
@@ -367,7 +382,7 @@ pub fn push_artifacts(
                     repo_root,
                 ));
                 let removed =
-                    remove_from_repo(&tracked_before, &pushed, &category_root, repo_root)?;
+                    remove_from_repo(&tracked_before, &pushed, &category_root, repo_root, writes)?;
                 counts.deleted += removed.len();
                 for path in &removed {
                     report.record(desc.id, ArtifactChangeKind::Deleted, path);
@@ -398,11 +413,11 @@ pub fn push_artifacts(
                     let (merged, new_lines) = merge_history_lines(&repo_text, &local_text);
                     counts.merged_entries += new_lines;
                     if !existed {
-                        write_atomic(&dest, merged.as_bytes(), &file.abs)?;
+                        write(&dest, merged.as_bytes(), &file.abs)?;
                         counts.added += 1;
                         report.record(desc.id, ArtifactChangeKind::Added, &file.rel);
                     } else if merged != repo_text {
-                        write_atomic(&dest, merged.as_bytes(), &file.abs)?;
+                        write(&dest, merged.as_bytes(), &file.abs)?;
                         counts.modified += 1;
                         report.record(desc.id, ArtifactChangeKind::Modified, &file.rel);
                     } else {
@@ -433,15 +448,19 @@ pub fn push_artifacts(
                     }
 
                     if !existed {
-                        write_atomic(&dest, &src_bytes, &file.abs)?;
+                        write(&dest, &src_bytes, &file.abs)?;
                         counts.added += 1;
                         report.record(desc.id, ArtifactChangeKind::Added, &file.rel);
                     } else if fs::read(&dest)? != src_bytes {
-                        write_atomic(&dest, &src_bytes, &file.abs)?;
+                        write(&dest, &src_bytes, &file.abs)?;
                         counts.modified += 1;
                         report.record(desc.id, ArtifactChangeKind::Modified, &file.rel);
                     } else {
-                        let realigned = align_executable_bit(&dest, &file.abs);
+                        let realigned = if writes {
+                            align_executable_bit(&dest, &file.abs)
+                        } else {
+                            executable_bit_differs(&dest, &file.abs)
+                        };
                         if realigned {
                             counts.modified += 1;
                             report.record(desc.id, ArtifactChangeKind::Modified, &file.rel);
@@ -456,7 +475,8 @@ pub fn push_artifacts(
         report.counts.push(counts);
     }
 
-    if active_categories(filter).any(|desc| desc.mirrors_deletions()) {
+    let tracks_deletions = active_categories(filter).any(|desc| desc.mirrors_deletions());
+    if writes && tracks_deletions {
         tracked::save(claude_dir, repo_root, tracked_now)?;
     }
     Ok(report)
@@ -567,6 +587,7 @@ fn remove_from_repo(
     pushed: &TrackedPaths,
     category_root: &Path,
     repo_root: &Path,
+    writes: bool,
 ) -> Result<Vec<PathBuf>> {
     let mut removed = Vec::new();
     let category_prefix = repo_relative(repo_root, category_root).unwrap_or_default();
@@ -576,8 +597,10 @@ fn remove_from_repo(
         }
         let path = repo_root.join(&gone);
         if path.is_file() {
-            fs::remove_file(&path)
-                .with_context(|| format!("Failed to remove {}", path.display()))?;
+            if writes {
+                fs::remove_file(&path)
+                    .with_context(|| format!("Failed to remove {}", path.display()))?;
+            }
             let category_relative = Path::new(&gone)
                 .strip_prefix(&category_prefix)
                 .map(Path::to_path_buf)
