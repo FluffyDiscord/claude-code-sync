@@ -29,7 +29,7 @@ ignore = "0.4"
 rayon = "1.11"
 colored = "3.1.1"
 dirs = "7.0.0"
-uuid = { version = "1.23.3", features = ["v4", "serde"] }
+uuid = { version = "1.23.3", features = ["v4"] }
 base64 = "0.23.1"
 # Without `fuzzy`: it pulls the archived fuzzy-matcher. Typing in a select
 # filters by substring instead.
@@ -55,9 +55,6 @@ ureq = { version = "3.4.2", default-features = false, features = ["native-tls"] 
 zip = { version = "9.0.5", default-features = false, features = ["deflate-flate2-zlib-rs"] }
 
 [dev-dependencies]
-walkdir = "2.5"
-serde_json = "1.0.150"
-dirs = "7.0.0"
 serial_test = "4.0.1"
 
 # Used by bin/release.sh for local cross-builds: optimized for size. `release`

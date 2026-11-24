@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::Path;
 
+use crate::config::ConfigManager;
 use crate::conflict::{Conflict, ConflictResolution};
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -200,8 +201,7 @@ pub fn generate_report(format: &str, output: Option<&Path>) -> Result<()> {
 }
 
 pub fn load_latest_report() -> Result<ConflictReport> {
-    let sync_state_path = get_sync_state_dir()?;
-    let report_path = sync_state_path.join("latest-conflict-report.json");
+    let report_path = ConfigManager::conflict_report_path()?;
 
     if !report_path.exists() {
         return Ok(ConflictReport {
@@ -221,20 +221,15 @@ pub fn load_latest_report() -> Result<ConflictReport> {
 }
 
 pub fn save_conflict_report(report: &ConflictReport) -> Result<()> {
-    let sync_state_path = get_sync_state_dir()?;
-    fs::create_dir_all(&sync_state_path).context("Failed to create sync state directory")?;
+    ConfigManager::ensure_config_dir()?;
 
-    let report_path = sync_state_path.join("latest-conflict-report.json");
+    let report_path = ConfigManager::conflict_report_path()?;
     let content = report.to_json()?;
 
     fs::write(&report_path, content)
         .with_context(|| format!("Failed to write report to {}", report_path.display()))?;
 
     Ok(())
-}
-
-fn get_sync_state_dir() -> Result<std::path::PathBuf> {
-    crate::config::ConfigManager::config_dir()
 }
 
 #[cfg(test)]

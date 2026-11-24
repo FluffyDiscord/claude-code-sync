@@ -60,24 +60,6 @@ fn test_ensure_config_dir_creates_directory() -> Result<()> {
 
 #[test]
 #[serial]
-fn test_config_directory_structure() -> Result<()> {
-    let _env = ConfigEnv::new();
-
-    let config_dir = ConfigManager::ensure_config_dir()?;
-    assert!(config_dir.exists());
-    assert!(config_dir.is_dir());
-
-    let snapshots_dir = ConfigManager::ensure_snapshots_dir()?;
-    assert!(snapshots_dir.exists());
-    assert!(snapshots_dir.is_dir());
-
-    assert!(snapshots_dir.starts_with(&config_dir));
-
-    Ok(())
-}
-
-#[test]
-#[serial]
 fn test_filter_config_save_and_load() -> Result<()> {
     let _env = ConfigEnv::new();
 

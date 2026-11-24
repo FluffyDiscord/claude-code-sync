@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [master, develop, "renovate/**"]
+    branches: [master, "renovate/**"]
   workflow_dispatch:
 
 jobs:
@@ -78,33 +78,6 @@ jobs:
 
       - name: Build and smoke-test release binary
         run: mise run e2e
-
-  coverage:
-    name: Code Coverage
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v7
-
-      - name: Install mise
-        uses: jdx/mise-action@v4
-
-      - name: Cache cargo build
-        uses: Swatinem/rust-cache@v2
-
-      - name: Configure git identity for tests
-        run: |
-          git config --global user.email "ci@github.actions"
-          git config --global user.name "GitHub Actions CI"
-
-      - name: Generate coverage report
-        run: mise run coverage
-
-      - name: Upload to Codecov
-        uses: codecov/codecov-action@v7
-        with:
-          files: ./cobertura.xml
-          fail_ci_if_error: false
 
   audit:
     name: Security Audit

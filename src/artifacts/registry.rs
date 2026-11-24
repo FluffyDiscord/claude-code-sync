@@ -334,14 +334,6 @@ pub fn toggleable() -> impl Iterator<Item = &'static CategoryDescriptor> {
         .filter(|d| d.id != CategoryId::ProjectAttachments)
 }
 
-#[allow(dead_code)]
-pub fn enabled_categories(toggles: &ArtifactToggles) -> Vec<&'static CategoryDescriptor> {
-    REGISTRY
-        .iter()
-        .filter(|d| toggles.is_enabled(d.id))
-        .collect()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

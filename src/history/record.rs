@@ -43,17 +43,6 @@ impl OperationRecord {
         }
     }
 
-    #[allow(dead_code)]
-    pub fn summary(&self) -> String {
-        format!(
-            "{} operation on {} at {} ({} conversations affected)",
-            self.operation_type.as_str(),
-            self.branch.as_deref().unwrap_or("unknown branch"),
-            self.timestamp.format("%Y-%m-%d %H:%M:%S UTC"),
-            self.affected_conversations.len()
-        )
-    }
-
     pub fn operation_stats(&self) -> std::collections::HashMap<SyncOperation, usize> {
         let mut stats = std::collections::HashMap::new();
         for conv in &self.affected_conversations {
@@ -135,29 +124,6 @@ mod tests {
         assert_eq!(record.branch, Some("main".to_string()));
         assert_eq!(record.affected_conversations.len(), 2);
         assert!(record.snapshot_path.is_none());
-    }
-
-    #[test]
-    fn test_operation_record_summary() {
-        let conversations = vec![ConversationSummary::new(
-            "session-1".to_string(),
-            "path/1".to_string(),
-            None,
-            5,
-            SyncOperation::Added,
-        )
-        .unwrap()];
-
-        let record = OperationRecord::new(
-            OperationType::Pull,
-            Some("feature-branch".to_string()),
-            conversations,
-        );
-
-        let summary = record.summary();
-        assert!(summary.contains("pull"));
-        assert!(summary.contains("feature-branch"));
-        assert!(summary.contains("1 conversations affected"));
     }
 
     #[test]

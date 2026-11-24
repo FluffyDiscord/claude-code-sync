@@ -68,7 +68,6 @@ impl ConfigManager {
         Ok(Self::config_dir()?.join("repo"))
     }
 
-    #[allow(dead_code)]
     pub fn conflict_report_path() -> Result<PathBuf> {
         Ok(Self::config_dir()?.join("latest-conflict-report.json"))
     }
@@ -86,18 +85,6 @@ impl ConfigManager {
             )
         })?;
         Ok(config_dir)
-    }
-
-    #[allow(dead_code)]
-    pub fn ensure_snapshots_dir() -> Result<PathBuf> {
-        let snapshots_dir = Self::snapshots_dir()?;
-        std::fs::create_dir_all(&snapshots_dir).with_context(|| {
-            format!(
-                "Failed to create snapshots directory: {}",
-                snapshots_dir.display()
-            )
-        })?;
-        Ok(snapshots_dir)
     }
 }
 
