@@ -114,6 +114,44 @@ pub fn is_synced_path(filter: &FilterConfig, relative: &Path) -> bool {
     }
 }
 
+pub fn is_pushed_from_here(filter: &FilterConfig, encoded_dir: &str, encoded_home: &str) -> bool {
+    if !filter.mapped_projects_only {
+        return true;
+    }
+    let is_mapped = canonical_id(&filter.project_map, encoded_dir).is_some();
+    if is_mapped {
+        return true;
+    }
+    !names_another_machine(encoded_dir, encoded_home)
+}
+
+fn names_another_machine(encoded_dir: &str, encoded_home: &str) -> bool {
+    let encoded_dir = encoded_dir.to_ascii_lowercase();
+    let encoded_home = encoded_home.to_ascii_lowercase();
+    let is_this_home = encoded_dir == encoded_home;
+    let is_under_this_home = encoded_dir.starts_with(&format!("{encoded_home}-"));
+    if is_this_home || is_under_this_home {
+        return false;
+    }
+    let names_a_windows_share = encoded_dir.starts_with("--");
+    if names_a_windows_share {
+        return !cfg!(windows);
+    }
+    let names_a_windows_drive = names_windows_drive(&encoded_dir);
+    let names_a_home = encoded_dir.starts_with("-home-")
+        || encoded_dir.starts_with("-users-")
+        || (names_a_windows_drive && encoded_dir[3..].starts_with("users-"));
+    if names_a_home {
+        return true;
+    }
+    names_a_windows_drive != cfg!(windows)
+}
+
+fn names_windows_drive(encoded_dir: &str) -> bool {
+    let bytes = encoded_dir.as_bytes();
+    bytes.len() >= 3 && bytes[0].is_ascii_alphabetic() && bytes[1] == b'-' && bytes[2] == b'-'
+}
+
 pub fn checkout_directories(filter: &FilterConfig, local_projects_dir: &Path) -> Vec<String> {
     let mut project_dirs = Vec::new();
     for (id, path) in &filter.project_map {

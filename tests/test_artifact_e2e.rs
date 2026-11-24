@@ -300,8 +300,19 @@ fn test_push_sends_every_transcript_while_pull_takes_only_mapped_projects() {
     machine_a.activate();
     machine_a.write_filter(&mapped_only);
     seed_full_claude_home(&machine_a.claude());
-    let unmapped = machine_a.claude().join("projects/-home-user-other");
+    let own_unmapped = format!(
+        "projects/{}-other",
+        claude_code_sync::project_map::encode_project_path(&machine_a.home)
+    );
+    let unmapped = machine_a.claude().join(&own_unmapped);
     fs::create_dir_all(unmapped.join("memory")).unwrap();
+    let other_machines_copy = machine_a.claude().join("projects/-home-zz-other");
+    fs::create_dir_all(&other_machines_copy).unwrap();
+    fs::write(
+        other_machines_copy.join("dddd-4444.jsonl"),
+        "{\"type\":\"user\",\"sessionId\":\"dddd-4444\",\"uuid\":\"u4\",\"timestamp\":\"2025-01-02T00:00:00Z\",\"cwd\":\"/home/zz/other\"}\n",
+    )
+    .unwrap();
     fs::write(
         unmapped.join("bbbb-2222.jsonl"),
         "{\"type\":\"user\",\"sessionId\":\"bbbb-2222\",\"uuid\":\"u2\",\"timestamp\":\"2025-01-02T00:00:00Z\",\"cwd\":\"/home/user/other\"}\n",
@@ -317,12 +328,16 @@ fn test_push_sends_every_transcript_while_pull_takes_only_mapped_projects() {
         "{tracked}"
     );
     assert!(
-        tracked.contains("projects/-home-user-other/bbbb-2222.jsonl"),
+        tracked.contains(&format!("{own_unmapped}/bbbb-2222.jsonl")),
         "{tracked}"
     );
     assert!(
-        !tracked.contains("projects/-home-user-other/memory"),
+        !tracked.contains(&format!("{own_unmapped}/memory")),
         "artifacts stay mapped-only: {tracked}"
+    );
+    assert!(
+        !tracked.contains("projects/-home-zz-other"),
+        "another machine's leftover copy is not pushed: {tracked}"
     );
 
     let repo_b = root.path().join("b");
@@ -338,10 +353,7 @@ fn test_push_sends_every_transcript_while_pull_takes_only_mapped_projects() {
     pull_history(true, None, false, VerbosityLevel::Quiet).unwrap();
 
     assert!(b_webapp.join("aaaa-1111.jsonl").is_file());
-    assert!(!machine_b
-        .claude()
-        .join("projects/-home-user-other")
-        .exists());
+    assert!(!machine_b.claude().join(&own_unmapped).exists());
 
     fs::write(
         b_webapp.join("cccc-3333.jsonl"),
@@ -354,7 +366,7 @@ fn test_push_sends_every_transcript_while_pull_takes_only_mapped_projects() {
     pull_history(true, None, false, VerbosityLevel::Quiet).unwrap();
     assert!(
         repo_a
-            .join("projects/-home-user-other/bbbb-2222.jsonl")
+            .join(format!("{own_unmapped}/bbbb-2222.jsonl"))
             .is_file(),
         "a pull keeps this machine's unmapped transcripts checked out"
     );

@@ -202,9 +202,14 @@ folders of its own projects, plus shared settings and artifacts. Other machines'
 `purge` here prunes only the mapped projects and this machine's own
 transcripts in the repo.
 
-**Push sends every transcript.** Transcripts of unmapped projects go to the
-repo too, under their encoded path, so the repo backs up all of them. Their
-project memory and attachments stay here.
+**Push sends every transcript of this machine.** Transcripts of unmapped
+projects go to the repo too, under their encoded path, so the repo backs up
+all of them. Their project memory and attachments stay here.
+
+> A folder named after another machine's home (`-home-k-…` on a Mac,
+> `C--Users-Admin-…` on Linux) is a copy an older version pulled. Push skips
+> it unless it's mapped. A repo copy with later messages than the local one is
+> never replaced.
 
 > A sync repo cloned by an older version keeps what it already downloaded.
 > Re-clone it to free the space.

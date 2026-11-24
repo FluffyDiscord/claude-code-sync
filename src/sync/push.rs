@@ -69,6 +69,16 @@ fn compute_relative_path(
     Some(full_relative.to_path_buf())
 }
 
+fn is_later(candidate: Option<&str>, reference: Option<&str>) -> bool {
+    let parse = |timestamp: Option<&str>| {
+        timestamp.and_then(|value| chrono::DateTime::parse_from_rfc3339(value).ok())
+    };
+    match (parse(candidate), parse(reference)) {
+        (Some(candidate), Some(reference)) => candidate > reference,
+        _ => false,
+    }
+}
+
 pub fn needs_copy(entry: &PlannedSessionPush, dest_path: &Path) -> bool {
     if entry.operation != SyncOperation::Unchanged {
         return true;
@@ -106,7 +116,10 @@ pub fn plan_push(
 
         let dest_path = projects_dir.join(&relative_path);
         let operation = if let Some(existing) = existing_map.get(dest_path.as_path()) {
-            if existing.content_hash() == session.content_hash() {
+            let is_identical = existing.content_hash() == session.content_hash();
+            let repo_copy_is_later =
+                is_later(existing.latest_timestamp(), session.latest_timestamp());
+            if is_identical || repo_copy_is_later {
                 plan.unchanged += 1;
                 SyncOperation::Unchanged
             } else {
@@ -180,8 +193,38 @@ pub fn push_history(
         .unwrap_or_else(|| "main".to_string());
 
     println!("  {} conversation sessions...", "Discovering".cyan());
-    let sessions = discover_sessions(&claude_dir, &every_transcript)?;
+    let home = dirs::home_dir().context("Failed to get home directory")?;
+    let encoded_home = crate::project_map::encode_project_path(&home);
+    let mut sessions = discover_sessions(&claude_dir, &every_transcript)?;
+    let mut other_machines_folders = std::collections::BTreeSet::new();
+    sessions.retain(|session| {
+        let relative = session
+            .file_path
+            .strip_prefix(&claude_dir)
+            .unwrap_or(&session.file_path);
+        let Some((encoded_dir, _)) = crate::project_map::split_project_path(relative) else {
+            return true;
+        };
+        let is_pushed =
+            crate::project_map::is_pushed_from_here(&filter, encoded_dir, &encoded_home);
+        if !is_pushed {
+            other_machines_folders.insert(encoded_dir.to_string());
+        }
+        is_pushed
+    });
     println!("  {} {} sessions", "Found".green(), sessions.len());
+    if !other_machines_folders.is_empty() {
+        println!(
+            "  {} {} folders named after another machine's home (map one to push it)",
+            "Skipped".yellow(),
+            other_machines_folders.len()
+        );
+    }
+    if verbosity == VerbosityLevel::Verbose {
+        for folder in &other_machines_folders {
+            println!("    {}", folder.dimmed());
+        }
+    }
 
     if filter.use_project_name_only {
         let collisions = find_colliding_projects(&claude_dir);

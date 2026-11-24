@@ -208,6 +208,42 @@ fn test_push_plan_detects_real_modification() {
 
 #[test]
 #[serial]
+fn an_older_local_copy_never_replaces_a_later_repo_copy() {
+    let _env = ConfigEnv::new();
+    let claude = TempDir::new().unwrap();
+    let repo_projects = TempDir::new().unwrap();
+    seed_claude_projects(claude.path());
+    let filter = common::every_project_filter();
+
+    let sessions = discover_sessions(claude.path(), &filter).unwrap();
+    let plan1 = plan_push(&sessions, claude.path(), repo_projects.path(), &filter).unwrap();
+    for entry in &plan1.entries {
+        let dest = repo_projects.path().join(&entry.relative_path);
+        sessions[entry.session_index].copy_to(&dest).unwrap();
+    }
+
+    let repo_parent = repo_projects
+        .path()
+        .join("-home-user-myproj")
+        .join(format!("{PARENT_SESSION_ID}.jsonl"));
+    let mut file = fs::OpenOptions::new()
+        .append(true)
+        .open(&repo_parent)
+        .unwrap();
+    writeln!(
+        file,
+        r#"{{"type":"assistant","sessionId":"{PARENT_SESSION_ID}","uuid":"parent-3","timestamp":"2025-01-02T00:00:00Z","message":{{"text":"added on another machine"}}}}"#
+    )
+    .unwrap();
+
+    let sessions2 = discover_sessions(claude.path(), &filter).unwrap();
+    let plan2 = plan_push(&sessions2, claude.path(), repo_projects.path(), &filter).unwrap();
+    assert_eq!(plan2.modified, 0, "the later repo copy is kept");
+    assert_eq!(plan2.unchanged, 3);
+}
+
+#[test]
+#[serial]
 fn mapped_projects_only_discovers_just_the_mapped_projects() {
     let _env = ConfigEnv::new();
     let projects = TempDir::new().unwrap();
