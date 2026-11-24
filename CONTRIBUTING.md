@@ -1,332 +1,208 @@
-# Contributing to claude-code-sync
+# Contributing
 
-Thank you for your interest in contributing to claude-code-sync! This document provides guidelines and instructions for contributing.
+Build, test, commit and release claude-code-sync. **Work goes straight to `master`. There are no pull requests.**
 
-## Code of Conduct
+## Setup
 
-- Be respectful and inclusive
-- Welcome newcomers and help them get started
-- Focus on constructive feedback
-- Prioritize the project's goals and user needs
+1. Clone the repository.
 
-## Getting Started
-
-### Prerequisites
-
-- Rust 1.70 or later
-- Git
-- A GitHub account
-
-### Setting Up Your Development Environment
-
-1. Fork the repository on GitHub
-2. Clone your fork:
    ```bash
-   git clone https://github.com/YOUR_USERNAME/claude-code-sync.git
+   git clone https://github.com/FluffyDiscord/claude-code-sync.git
    cd claude-code-sync
    ```
 
-3. Add the upstream repository:
+2. Install the toolchain from `mise.toml`: Rust 1.96 with rustfmt and clippy, cargo-binstall and cargo-deny.
+
    ```bash
-   git remote add upstream https://github.com/ORIGINAL_OWNER/claude-code-sync.git
+   mise install
    ```
 
-4. Install dependencies and build:
+3. Set a git identity. The integration tests create commits and fail without one.
+
    ```bash
-   cargo build
+   git config --global user.name "Your Name"
+   git config --global user.email "you@example.com"
    ```
 
-5. Run tests to verify setup:
+4. Check that everything passes.
+
    ```bash
-   cargo test
+   mise run ci
    ```
 
-## Development Workflow
+## Tasks
 
-**Work goes straight to `master`.**
+Every task lives in `mise.toml`, and CI runs the same ones. `mise run ci` runs `fmt-check`, `lint`, `build` and `test`.
 
-### 1. Make Your Changes
+| Task | Runs |
+|---|---|
+| `mise run fmt` | `cargo fmt --all` |
+| `mise run fmt-check` | `cargo fmt --all -- --check` |
+| `mise run lint` | `cargo clippy --all-targets --all-features -- -D warnings` |
+| `mise run build` | `cargo build --verbose` |
+| `mise run build-release -- --target <triple>` | `cargo build --release --verbose` for that target |
+| `mise run test` | `cargo test --verbose -- --test-threads=1` |
+| `mise run test-unit` | `cargo test --lib --verbose -- --test-threads=1` |
+| `mise run test-doc` | `cargo test --doc --verbose` |
+| `mise run test-integration` | `cargo test --test '*' --verbose -- --test-threads=1` |
+| `mise run audit` | `cargo deny check advisories bans` |
+| `mise run e2e` | A release build, then `--version` and `--help` on the binary |
 
-- Write clear, concise code
-- Follow Rust best practices and idioms
-- Add tests for new functionality
-- Update documentation as needed
-- Keep commits focused and atomic
+Clippy warnings fail the build.
 
-### 2. Run Quality Checks
-
-Before committing, ensure your code passes all checks:
+## Tests
 
 ```bash
-# Format code
-cargo fmt
-
-# Run linter
-cargo clippy
-
-# Run tests
-cargo test
-
-# Check compilation
-cargo check
+cargo test -- --test-threads=1
 ```
 
-### 3. Commit Your Changes
+**Always run the tests single-threaded.**
+Every test shares one configuration directory, resolved by `ConfigManager` and overridable with `CLAUDE_CODE_SYNC_CONFIG_DIR`.
+Parallel tests race on it. On macOS a parallel run can fall back to your real `~/Library/Application Support/claude-code-sync` and overwrite it.
+`mise run test`, `test-unit` and `test-integration` pass `--test-threads=1` for you, and CI runs `mise run test`.
 
-Write clear commit messages following this format:
+Integration tests live in `tests/`, and unit tests sit next to the code in `#[cfg(test)] mod tests`.
+Tests that change process-wide state are marked `#[serial]` from `serial_test`.
 
-```
-<type>: <subject>
+`mise run test-integration` doesn't work on Windows.
 
-<body>
-
-<footer>
-```
-
-**Types:**
-- `feat`: New feature
-- `fix`: Bug fix
-- `docs`: Documentation changes
-- `style`: Formatting, missing semicolons, etc.
-- `refactor`: Code restructuring
-- `test`: Adding tests
-- `chore`: Maintenance tasks
-
-**Example:**
-```
-feat: add support for encrypted repositories
-
-- Implement GPG encryption for sensitive conversations
-- Add --encrypt flag to init command
-- Update documentation with encryption examples
-
-Closes #123
-```
-
-### 4. Push
+## Dependency audit
 
 ```bash
-git push origin master
+mise run audit
 ```
 
-## Coding Standards
+`deny.toml` fails the audit on any of these:
 
-### Rust Style Guide
+- A crate with a security advisory, an unmaintained crate, an unsound crate or a yanked version.
+- A crate on the ban list:
 
-- Follow the [Rust Style Guide](https://doc.rust-lang.org/1.0.0/style/)
-- Use `cargo fmt` for formatting
-- Address all `cargo clippy` warnings
-- Prefer explicit over implicit
-- Write self-documenting code with clear names
+| Crate | Reason | Use instead |
+|---|---|---|
+| `atty` | It's unmaintained and unsound. | `std::io::IsTerminal` |
+| `fuzzy-matcher` | It's archived upstream. | Nothing; `inquire` runs without its `fuzzy` feature. |
+| `winapi` | It's abandoned. | `windows-sys` |
 
-### Code Organization
+`winapi` is allowed only through `crossterm` and `crossterm_winapi`, which need it on Windows.
+Several versions of one crate are allowed.
 
-```rust
-// 1. External crate imports
-use anyhow::Result;
-use serde::Deserialize;
+## Dependency updates
 
-// 2. Standard library imports
-use std::fs;
-use std::path::Path;
+Nothing to do. Renovate (`renovate.json`) handles them:
 
-// 3. Internal module imports
-use crate::parser::ConversationSession;
+- It runs after 10 pm and before 5 am on weekdays, and all weekend.
+- Every update, major ones included, merges on its own once the release is 3 days old and CI passes on its `renovate/**` branch.
+- Security fixes merge on their own too.
+- It commits as `deps: …` and bumps the version range in `Cargo.toml`.
+- A pull request opens only after you approve it on the dependency dashboard.
 
-// 4. Type definitions
-struct MyStruct { ... }
+## CI
 
-// 5. Implementation
-impl MyStruct { ... }
+| Workflow | Runs on | Does |
+|---|---|---|
+| `ci.yml` | A push to `master` or `renovate/**`, and manual runs | Builds and tests on Ubuntu, macOS and Windows. Checks formatting and clippy, smoke-tests a release build and runs the dependency audit. |
+| `build.yml` | A push to `master` that changes `Cargo.toml`, `Cargo.lock`, `mise.toml`, `src/self_update.rs`, `build.yml` or `release.yml`. `release.yml` also calls it. | Builds the release binaries for all 8 targets and runs `--version` on each. On a release it uploads them. |
+| `release.yml` | A pushed `v*` tag | Creates the GitHub release and calls `build.yml`. |
 
-// 6. Tests
-#[cfg(test)]
-mod tests { ... }
+The `ci.yml` and `build.yml` jobs install their tools with `jdx/mise-action` and run the mise tasks above.
+
+`build.yml` builds these targets, each on its own native runner:
+
+- `x86_64-unknown-linux-gnu`, `x86_64-unknown-linux-musl`
+- `aarch64-unknown-linux-gnu`, `aarch64-unknown-linux-musl`
+- `x86_64-apple-darwin`, `aarch64-apple-darwin`
+- `x86_64-pc-windows-msvc`, `aarch64-pc-windows-msvc`
+
+**Don't rename the release assets.** `self-update` and the README's download links build the asset names themselves, for example `claude-code-sync-linux-x86_64-musl.tar.gz` and `claude-code-sync-windows-x86_64.exe.zip`.
+Each archive ships with a `.sha256` file.
+
+## Commits
+
+Use [Conventional Commits](https://www.conventionalcommits.org/): a type, an optional scope, then a short description.
+
+```text
+feat(push): push every transcript and move mapped projects under their id
+fix(cache): keep transcript summaries across releases
+refactor!: <a breaking change>
 ```
 
-### Documentation
+- The types in use are `feat`, `fix`, `perf`, `refactor`, `test`, `ci`, `docs` and `chore`.
+- `!` after the type marks a breaking change.
+- A release commit is `chore: release X.Y.Z`.
 
-- Add doc comments for public items
-- Include examples in doc comments
-- Update README.md for user-facing changes
-- Add entries to EXAMPLES.md for new features
+Every commit subject since the previous tag becomes a line in the release notes, so write it for the reader of the release.
 
-**Example:**
-```rust
-/// Parse a JSONL conversation file
-///
-/// # Arguments
-/// * `path` - Path to the JSONL file
-///
-/// # Returns
-/// A `ConversationSession` containing all parsed entries
-///
-/// # Example
-/// ```
-/// let session = ConversationSession::from_file("session.jsonl")?;
-/// println!("Session has {} messages", session.message_count());
-/// ```
-pub fn from_file<P: AsRef<Path>>(path: P) -> Result<Self> {
-    // implementation
-}
-```
-
-### Testing
-
-> **Run the test suite single-threaded:**
-> ```bash
-> cargo test -- --test-threads=1
-> ```
-> Tests share a process-global configuration directory (resolved by
-> `ConfigManager`, overridable via the `CLAUDE_CODE_SYNC_CONFIG_DIR` environment
-> variable). Running them in parallel would race on that shared location. The CI
-> workflows already pass `--test-threads=1`. On macOS in particular, a parallel
-> run could otherwise fall back to and clobber your real
-> `~/Library/Application Support/claude-code-sync` directory.
-
-All new code should include tests:
-
-1. **Unit Tests**: Test individual functions
-   ```rust
-   #[cfg(test)]
-   mod tests {
-       use super::*;
-
-       #[test]
-       fn test_parser_handles_empty_file() {
-           // test implementation
-       }
-   }
-   ```
-
-2. **Integration Tests**: Test module interactions
-   ```rust
-   // tests/integration_tests.rs
-   #[test]
-   fn test_end_to_end_sync() {
-       // test implementation
-   }
-   ```
-
-3. **Edge Cases**: Test error conditions, empty inputs, large datasets
-
-### Error Handling
-
-- Use `anyhow::Result` for fallible functions
-- Provide context with `.context()`:
-  ```rust
-  fs::read_to_string(&path)
-      .with_context(|| format!("Failed to read file: {}", path.display()))?
-  ```
-- Return descriptive errors to users
-- Log errors for debugging
+There's no `CHANGELOG.md`; the GitHub release notes are the changelog.
 
 ## Releasing
 
-**A pushed `v*` tag is a release.** CI checks the tag matches `Cargo.toml`, creates the GitHub release with the commits since the last tag as notes, and attaches every platform's binary.
+**A pushed `v*` tag is a release.** Bump the version by [Semantic Versioning](https://semver.org/).
+
+1. Set `version` in `Cargo.toml`, then update `Cargo.lock` to match.
+
+   ```bash
+   cargo check
+   ```
+
+2. Commit both files.
+
+   ```bash
+   git commit -am "chore: release X.Y.Z"
+   ```
+
+3. Tag the commit.
+
+   ```bash
+   git tag vX.Y.Z
+   ```
+
+4. Push `master` and the tag together.
+
+   ```bash
+   git push origin master vX.Y.Z
+   ```
+
+5. Wait for `release.yml` to finish. It runs these steps:
+   1. It checks that the `Cargo.toml` version matches the tag. A mismatch fails the run before anything is built.
+   2. It creates the GitHub release. The notes list every commit since the previous tag, merges left out.
+   3. `build.yml` builds the 8 targets and attaches each archive with its checksum.
+
+6. Update your installed binary.
+
+   ```bash
+   claude-code-sync self-update
+   ```
+
+   `sync` also updates itself to the latest release before it runs. Set `CLAUDE_CODE_SYNC_NO_UPDATE=1` to skip that.
+   A binary installed with `cargo install` into `~/.cargo/bin` refuses to update itself. Pass `--force` to update it anyway.
+
+## Local cross-builds
 
 ```bash
-# bump `version` in Cargo.toml, then:
-cargo check
-git commit -am "chore: release 0.4.15"
-git tag v0.4.15
-git push origin master v0.4.15
+bin/release.sh
 ```
 
-Follow [Semantic Versioning](https://semver.org/).
+It builds Linux (musl), Windows and a universal macOS binary into `dist/` from one Linux or macOS host.
 
-## Areas for Contribution
+- It needs the rustup targets the script lists, `cargo-zigbuild` (`cargo install cargo-zigbuild`), zig and python3.
+- It uses the `dist` profile from `Cargo.toml`, which is built for size. The `release` profile, used by `cargo install` and by CI, stays as the crate sets it.
+- Published releases always come from CI, not from this script.
 
-### High Priority
+## Code
 
-- [ ] Full end-to-end integration tests
-- [ ] Performance optimizations for large datasets
-- [ ] Windows-specific testing and fixes
-- [ ] Export conversations to Markdown/HTML
-- [ ] Compression support for large files
+- Return `anyhow::Result` and add context to errors, for example `.with_context(|| format!("Failed to read {}", path.display()))`.
+- Update `README.md` for user-facing changes and `docs/architecture.md` for changes to the internals.
+- Track open work in `TODO.md`.
 
-### Feature Ideas
+## Bug reports
 
-- [ ] Selective sync by date/project
-- [ ] Web UI for browsing history
-- [ ] Encryption support
-- [ ] Smart merge for non-conflicting changes
-- [ ] Plugin system for Claude Code
-- [ ] Incremental sync (only changed files)
-- [ ] Search functionality across all sessions
+Open an issue with these details:
 
-### Documentation Improvements
-
-- [ ] Video tutorials
-- [ ] More usage examples
-- [ ] Troubleshooting guide expansion
-- [ ] Platform-specific installation guides
-- [ ] Architecture diagrams
-
-## Issue Reporting
-
-### Bug Reports
-
-Include:
-- Clear, descriptive title
-- Steps to reproduce
-- Expected behavior
-- Actual behavior
-- System information (OS, Rust version)
-- Relevant logs or error messages
-
-**Template:**
-```markdown
-**Description**
-A clear description of the bug
-
-**To Reproduce**
-1. Run `claude-code-sync init ...`
-2. Execute `claude-code-sync push`
-3. See error
-
-**Expected behavior**
-What should happen
-
-**Actual behavior**
-What actually happens
-
-**Environment**
-- OS: Ubuntu 22.04
-- Rust: 1.75.0
-- claude-code-sync: 0.1.0
-
-**Logs**
-```
-Error message here
-```
-```
-
-### Feature Requests
-
-Include:
-- Clear use case
-- Proposed solution
-- Alternative solutions considered
-- Implementation ideas (optional)
-
-## Questions?
-
-- Open a discussion on GitHub
-- Check existing issues
-- Read the documentation (README.md, EXAMPLES.md)
+- The steps and commands that reproduce it.
+- What you expected and what happened.
+- Your OS and the output of `claude-code-sync --version`.
+- The error message or log.
 
 ## License
 
-By contributing, you agree that your contributions will be licensed under the MIT License.
-
-## Recognition
-
-Contributors will be:
-- Listed in the README.md (optional)
-- Credited in release notes
-- Appreciated in the community!
-
----
-
-Thank you for contributing to claude-code-sync! 🎉
+Contributions are licensed under the MIT License.

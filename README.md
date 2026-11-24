@@ -3,381 +3,28 @@
 [![CI](https://github.com/FluffyDiscord/claude-code-sync/actions/workflows/ci.yml/badge.svg)](https://github.com/FluffyDiscord/claude-code-sync/actions/workflows/ci.yml)
 [![Release](https://github.com/FluffyDiscord/claude-code-sync/actions/workflows/release.yml/badge.svg)](https://github.com/FluffyDiscord/claude-code-sync/actions/workflows/release.yml)
 
-A Rust CLI tool for syncing Claude Code conversation history across machines using git repositories.
+Sync Claude Code conversations, settings, skills and rules between machines through a git repository you own.
+
+New here: follow [Usage](#usage). Second machine: see [Add another machine](#add-another-machine).
 
 ![Demo](demo1.svg)
 
-## Documentation
-
-To build and view the API documentation locally:
-```bash
-# Build and open documentation in your browser
-cargo doc --open --no-deps --all-features
-```
-
 ## Features
 
-| Feature | Description |
-|---------|-------------|
-| **Smart Merge** | Automatically combines non-conflicting conversation changes |
-| **Artifact Sync** | Carry settings, skills, agents, commands, rules, hooks, plugin manifests, plans, todos, and prompt history across machines |
-| **Project Map** | Sync only the projects you map on each machine; others never download. Renamed or relocated checkouts stay one project |
-| **Neutral Paths** | Synced config files store `__HOME__` / `__CLAUDE_DIR__` instead of this machine's absolute paths |
-| **Deletion Mirroring** | Deleting a skill, agent, command, rule or hook propagates, guarded so a fresh machine can never wipe the repo |
-| **External Merge Tool** | Resolve a differing file in a real three-way merge window instead of picking a side |
-| **Transcript Retention** | `purge` old conversations from the machine and the repo together, never sooner than Claude Code would |
-| **Secrets Guard** | Hardcoded never-sync denylist plus a managed ignore block in the sync repo |
-| **Bidirectional Sync** | Pull and push changes in one command with `sync` |
-| **Interactive Onboarding** | First-time setup wizard guides you through configuration |
-| **Non-Interactive Init** | Config file support for CI/CD and automation |
-| **Smart Conflict Resolution** | Interactive TUI for resolving conflicts with preview |
-| **Selective Sync** | Filter by project, date, or exclude attachments |
-| **Git LFS Support** | Efficiently store large conversation files with Git LFS |
-| **Undo Operations** | Rollback pull/push with automatic snapshots |
-| **Operation History** | Track and review past sync operations |
-| **Branch Management** | Sync to different branches, manage remotes |
-| **Detailed Logging** | Console and file logging with configurable levels |
-| **Conflict Tracking** | Comprehensive conflict reports in JSON/Markdown |
-| **Flexible Configuration** | TOML-based config with CLI overrides |
-
-## Overview
-
-`claude-code-sync` helps you backup and synchronize your Claude Code conversation history by pushing it to a git repository. This enables:
-
-- **Backup**: Never lose your Claude Code conversations
-- **Multi-machine sync**: Keep conversation history consistent across multiple computers
-- **Version control**: Track changes to your conversations over time
-- **Conflict resolution**: Automatically handles divergent conversation histories
-
-## How It Works
-
-Claude Code stores conversation history locally in `~/.claude/projects/` as JSONL (JSON Lines) files. Each project has its own directory, and each conversation is a separate `.jsonl` file.
-
-`claude-code-sync`:
-1. Discovers all conversation files in your local Claude Code history
-2. Copies them to a git repository (plus any enabled artifact categories — see [Artifact Sync](#artifact-sync))
-3. Commits and optionally pushes to a remote
-4. On pull, merges remote changes with local history
-5. Detects conflicts (same session modified on different machines)
-6. Resolves conflicts by keeping both versions with renamed files
-
-## Artifact Sync
-
-Conversation history is only part of a Claude Code environment. Artifact sync
-carries the rest of `~/.claude` across machines, per category:
-
-| Category | What it covers | Notes |
-|----------|----------------|-------|
-| `settings` | `settings.json`, `keybindings.json` | `settings.local.json` is never synced |
-| `memory` | `~/.claude/CLAUDE.md` | Global user memory |
-| `skills` | `~/.claude/skills/` | Custom skills, recursively |
-| `agents` | `~/.claude/agents/` | Custom subagent definitions |
-| `commands` | `~/.claude/commands/` | Custom slash commands |
-| `rules` | `~/.claude/rules/` | Shared rule files projects import |
-| `hooks` | `~/.claude/hooks/` | The scripts `settings.json` points at; they arrive executable |
-| `plugins` | `installed_plugins.json`, `known_marketplaces.json` | Only the manifests — plugin caches never sync |
-| `plans` | `~/.claude/plans/` | Plan-mode documents (may contain sensitive prose) |
-| `todos` | `~/.claude/todos/` | Session task lists (churny; consider leaving off) |
-| `prompt-history` | `~/.claude/history.jsonl` | Union-merged in both directions, so machines converge to the superset |
-| attachments | non-`.jsonl` files in `~/.claude/projects/` | Images, PDFs, and per-project `memory/` dirs; governed by `--exclude-attachments`, not a toggle |
-
-Enable categories per machine (all default **off** for existing configs; the
-first-run wizard pre-selects them for new setups, except `hooks`):
-
-```bash
-# Enable everything except hooks
-claude-code-sync config --enable-artifacts all
-
-# Or pick categories
-claude-code-sync config --enable-artifacts settings,skills,agents,commands,plugins,prompt-history
-
-# Turn one off again
-claude-code-sync config --disable-artifacts todos
-```
-
-`hooks` is only ever switched on by name, never by `all` or the wizard's
-defaults (see below):
-`claude-code-sync config --enable-artifacts hooks`.
-
-Of a file's permissions only the executable bit travels — it is the one git
-records — and it travels on its own: a `chmod +x` with no content change is
-still a change to sync. It is only ever granted, never taken away, so a
-repository written before this existed cannot disarm a script here, and a
-`chmod -x` has to be repeated per machine. Nothing else about a mode is copied:
-a pull never widens a local file, and a file a pull creates starts private.
-Carrying the bit at all depends on `core.fileMode` being true in the sync
-repository, which is git's default everywhere except Windows checkouts.
-
-**Hooks are executed code.** Unlike skills and rules, which are text the model
-reads, everything under `~/.claude/hooks/` runs automatically, and the
-`settings.json` that registers a hook syncs alongside it. An interactive pull
-confirms making a file executable, but a file the repository adds is still
-written without a prompt, so enable this category only for a repository you
-control.
-
-### What is NEVER synced
-
-A hardcoded denylist is enforced on every copy, in both directions, and cannot
-be overridden by any configuration: `.credentials.json`,
-`settings.local.json`, `.claude.json`, `*.pem`, `*.key`, `.env*`, `daemon*`,
-`stats-cache.json`, and machine-local directories (`shell-snapshots/`,
-`session-env/`, `file-history/`, `paste-cache/`, `cache/`, `debug/`,
-`statsig/`, `backups/`, `sessions/`). Pull refuses these paths even if they
-appear inside the sync repository, and every push maintains a managed guard
-block in the repo's `.gitignore` as defense in depth.
-
-### Sync repository layout
-
-```
-<sync_repo>/
-  .gitignore              # managed never-sync guard block
-  projects/               # conversation transcripts + attachments
-  artifacts/
-    settings/  memory/  skills/  agents/  commands/  rules/
-    hooks/     plugins/ plans/   todos/   prompt-history/
-```
-
-### Conflict policy and undo
-
-**A pull only takes what the other machine changed.** Each machine remembers
-the version it last synced, so a pull compares all three:
-
-| Since the last sync | Pull does |
-|---|---|
-| Only the remote changed it | takes the remote version |
-| Only this machine changed it | keeps it; the next push sends it |
-| This machine deleted it (skills, agents, commands, rules, hooks) | leaves it deleted; the next push removes it. Edited remotely → restores it |
-| The remote deleted it, this machine edited it | keeps it and warns; the next push restores it |
-| Both changed it, dates only | keeps the later dates |
-| Both changed it | asks `remote` / `local` (and `merge` with a [merge tool](#external-merge-tool)) in a terminal; otherwise keeps this machine's version and warns |
-| Never synced on this machine | takes the remote version |
-
-> **Upgrading from 0.4.x:** run `claude-code-sync push` once before your first
-> `sync`. Older versions kept no record of the last synced version, so settings
-> edited since your last push would still be overwritten one last time.
-
-Every overwritten local file is snapshotted first, and files the pull creates
-are recorded, so `claude-code-sync undo pull` is an exact inverse. Interactive
-pulls (`pull --interactive`) confirm each overwrite per file. `history.jsonl`
-is never overwritten — both push and pull merge the union of lines, so prompt
-history only ever grows.
-
-> **Note (Git LFS):** if your `lfs_patterns` include `*.jsonl`, the repo copy
-> of `history.jsonl` is LFS-tracked; content is materialized on checkout, so
-> union merging still works.
-
-## Machines that do not look alike
-
-### Project map: machines that keep projects elsewhere
-
-Claude Code names a project directory after its absolute path, so the same
-project is `-home-user-work-app` on one machine and `-Users-someone-src-app-renamed`
-on another. `use_project_name_only` collapses that to the folder name, which
-loses renames and gives up whenever two checkouts share a name.
-
-Map the project once per machine instead:
-
-```bash
-# on the Linux box: the id defaults to the folder name, `app`
-claude-code-sync config --map-project /home/user/work/app
-
-# on the Mac, where the same project lives elsewhere and is named differently
-claude-code-sync config --map-project app=/Users/someone/src/app-renamed
-
-# drop a mapping
-claude-code-sync config --unmap-project app
-```
-
-The repo then stores that project under `projects/app/`, and each machine
-materializes it back into its own directory. The next push moves a copy the
-repo already holds under the encoded path (`projects/-home-user-src-app/`)
-into `projects/app/`; a file already in `projects/app/` wins. The local folder
-in `~/.claude/projects` keeps its name, because Claude Code reads only that one. Ids are plain directory names,
-paths must be absolute and spelled exactly as the project's own path (a trailing
-slash encodes differently), and two ids pointing at one directory are refused.
-
-**Only mapped projects pull.** Mapping a project syncs it right away. This
-machine's copy of the sync repo downloads only its mapped projects and the
-folders of its own projects, plus shared settings and artifacts. Other machines' projects never land here, so
-`purge` here prunes only the mapped projects and this machine's own
-transcripts in the repo.
-
-**Push sends every transcript of this machine.** Transcripts of unmapped
-projects go to the repo too, under their encoded path, so the repo backs up
-all of them. Their project memory and attachments stay here.
-
-> A folder named after another machine's home (`-home-k-…` on a Mac,
-> `C--Users-Admin-…` on Linux) is a copy an older version pulled. Push skips
-> it unless it's mapped. A repo copy with later messages than the local one is
-> never replaced.
-
-> A sync repo cloned by an older version keeps what it already downloaded.
-> Re-clone it to free the space.
-
-**An id that's already taken is refused.** Two checkouts named `app` → map the
-second one under its own id:
-
-```bash
-claude-code-sync config --map-project personal-app=/home/user/personal/app
-```
-
-To move an id to another path, unmap and map it in one command:
-`--unmap-project app --map-project app=/new/path`.
-
-**To sync every project instead:**
-
-```bash
-claude-code-sync config --mapped-projects-only false
-```
-
-Unmapped projects then keep `use_project_name_only` or their encoded path, and
-the whole repo is downloaded. A machine that has not mapped an id yet skips
-those files rather than writing them to a directory Claude Code would never
-read; run `--map-project` there. All of a pull's misses are reported in one
-warning that names every unmapped project and how many files it holds. To get a
-line per file instead:
-
-```bash
-claude-code-sync config --warn-each-skipped-file true
-```
-
-### Machine-neutral paths in config files
-
-Config categories (`settings`, `plugins`) are stored with this machine's
-absolute paths replaced by `__CLAUDE_DIR__` and `__HOME__`, and rendered back on
-pull. A hook command, a status line, anything that names a path travels
-correctly — the rewrite is not tied to any particular key, so new settings need
-no new code. Only text files are touched; other categories are stored verbatim.
-
-### Deletions that actually propagate
-
-Each machine records which artifact paths it last synced (in
-`~/.claude/.claude-code-sync-tracked.json`, per sync repo, never itself synced).
-A file that machine received before and no longer has is a deletion: push
-removes it from the repo, pull removes it locally. This applies to the curated
-directories only — `skills`, `agents`, `commands`, `rules`, `hooks` — never to
-transcripts, attachments, plans, todos or prompt history.
-
-Three guards keep it from destroying anything:
-
-- A machine with no record deletes nothing, so a fresh clone can never wipe the repo.
-- A category whose directory is missing locally is skipped on push: "I do not
-  have `skills/`" says nothing about what the other machines hold.
-- A category the repo does not have at all is skipped on pull, so an older
-  branch cannot read as "everything was deleted". Deleting the *last* file of a
-  category still propagates: each synced category keeps a `.synced` marker in
-  the repo, because git does not track empty directories and the category would
-  otherwise disappear along with its last file.
-
-`undo push` also forgets this machine's record for that repository, since the
-repo has just been rewound underneath it; the next sync re-learns.
-
-Deleted files are snapshotted first, so `claude-code-sync undo pull` brings them
-back, and `pull --interactive` asks before each one.
-
-### Memory indexes merge instead of overwriting
-
-`MEMORY.md` files inside a project's `memory/` directory are union-merged by
-link target in both directions, the way prompt history is. A machine that knows
-about fewer memories can no longer orphan the ones another machine wrote. Your
-file keeps its own shape — headings, blank lines, prose and entry order stay put
-— and entries the other side has and yours does not are appended. Only entry
-lines travel: a heading or a note you write reaches the other machine only if
-your file is the one that created its copy.
-
-### Purging old transcripts
-
-Syncing keeps every conversation forever, on every machine and in the repo.
-`purge` removes the ones past a retention window from **both** sides at once —
-removing them only here would bring them back on the next pull, and only in the
-repo would send them back up from the next machine that still has them:
-
-```bash
-claude-code-sync purge --dry-run      # what would go, and how much space
-claude-code-sync purge                # asks first
-claude-code-sync purge --yes          # for scripts; required outside a terminal
-claude-code-sync purge --older-than 365
-```
-
-The default window is the **longer of six months and this machine's own Claude
-Code retention** (`cleanupPeriodDays` in `~/.claude/settings.json`, 30 days by
-default) — Claude Code deletes those transcripts by itself anyway, so the sync
-repo is never the shorter-lived copy. A window of your own wins; the minimum is
-30 days. Set one, and let a sync do it for you, with:
-
-```bash
-claude-code-sync config --purge-older-than 365
-claude-code-sync config --purge-after-sync true   # runs between pull and push
-```
-
-A transcript's age is its **last message**, not the file's timestamp: a
-conversation pulled onto a new machine today is still as old as it was. A
-transcript with no readable timestamp is never purged. Each removal takes what
-Claude Code keeps beside it — the session's `subagents/` and `tool-results/`
-directories and any superseded or orphaned copies — and lands in the repo as its
-own commit, so `git` still has everything until the history itself is rewritten.
-
-### External merge tool
-
-**Get `merge` next to `remote` / `local` in the per-file prompt** — on a file
-both machines changed in the sync repository, and on a pulled file that
-differs under `pull --interactive`:
-
-```bash
-claude-code-sync config --merge-tool "phpstorm merge"
-claude-code-sync config --prefer-merge-tool true   # prompt starts on merge
-```
-
-The tool runs as `<merge_tool> <local> <remote> <base> <output>` (JetBrains
-argument order). What it saves to `<output>` lands, even when that is the local
-version unchanged.
-
-- Both machines changed it → `<base>` is the version both started from.
-- Pulled file differs → `<base>` is empty; nothing records an ancestor.
-
-Set `CLAUDE_CODE_SYNC_MERGE_TIMEOUT_SECONDS` to change the 15-minute wait. Pass
-an empty string to `--merge-tool` to go back to the terminal picker.
-
-### Binaries per tag
-
-Pushing a tag builds every platform on its own runner and attaches the archives
-and checksums to that tag's GitHub release:
-
-```bash
-git tag v0.4.0 && git push origin v0.4.0
-```
-
-The release is created for it, with the commits since the previous tag as
-notes. Grab the asset for your platform
-from the [releases page](https://github.com/FluffyDiscord/claude-code-sync/releases).
-
-To build all of them locally instead — one Linux or macOS host, no Apple
-hardware and no Windows — run `bin/release.sh` (needs `cargo-zigbuild`, zig and
-python3); the binaries land in `dist/`. Two details make that possible, both
-documented in the script: `chrono`'s `clock` feature is off (it links
-CoreFoundation on macOS, so local time for log lines comes from `time`
-instead), and the `synchronization` import library Rust's Windows std needs is
-generated from zig's own API-set definition.
-
-## Installation
-
-### Download a release (Recommended)
-
-Every [release](https://github.com/FluffyDiscord/claude-code-sync/releases) ships
-these assets, each with a `.sha256` checksum file alongside it:
-
-| Platform | Asset |
-|----------|-------|
-| Linux x86_64 (static) | `claude-code-sync-linux-x86_64-musl.tar.gz` |
-| Linux x86_64 (glibc) | `claude-code-sync-linux-x86_64.tar.gz` |
-| Linux ARM64 (static) | `claude-code-sync-linux-aarch64-musl.tar.gz` |
-| Linux ARM64 (glibc) | `claude-code-sync-linux-aarch64.tar.gz` |
-| macOS Apple Silicon | `claude-code-sync-macos-aarch64.tar.gz` |
-| macOS Intel | `claude-code-sync-macos-x86_64.tar.gz` |
-| Windows x86_64 | `claude-code-sync-windows-x86_64.exe.zip` |
-| Windows ARM64 | `claude-code-sync-windows-aarch64.exe.zip` |
-
-Linux x86_64 example:
+- [Conversation sync](#how-a-pull-merges) — the same session continued on two machines merges into one transcript
+- [Artifact sync](#artifact-sync) — settings, memory, skills, agents, commands, rules, hooks, plugin manifests, plans, todos and prompt history follow you
+- [Project map](#project-map) — a project kept at a different path on each machine stays one project; unmapped projects never download
+- [Machine-neutral paths](#machine-neutral-paths) — hook commands and status lines that name a path work on every machine
+- [Deletions that propagate](#deletions-that-propagate) — delete a skill once, it's gone everywhere; a fresh machine can't wipe the repo
+- [External merge tool](#external-merge-tool) — resolve a differing file in a three-way merge window instead of picking a side
+- [Purge](#purge) — drop old transcripts from the machine and the repo together, never sooner than Claude Code would
+- [Secrets guard](#what-is-never-synced) — credentials, local settings and keys never leave the machine, whatever the config says
+- [Undo](#undo) — reverse the last pull or push from an automatic snapshot
+- [Self-update](#self-update) — `sync` installs the latest release before it runs
+
+## Install
+
+Download the build for your platform. Linux x86_64:
 
 ```bash
 mkdir -p ~/.local/bin
@@ -385,12 +32,22 @@ curl -fsSL https://github.com/FluffyDiscord/claude-code-sync/releases/latest/dow
   | tar -xz -C ~/.local/bin
 ```
 
-`~/.local/bin` must be on your `PATH`.
+`~/.local/bin` must be on your `PATH`. **To update:** `claude-code-sync self-update`. `sync` also updates itself.
 
-The static **musl** builds have no dependencies, so they run on any distro,
-including Alpine and NixOS.
+Every [release](https://github.com/FluffyDiscord/claude-code-sync/releases) has these assets, each with a `.sha256` file:
 
-**To update:** `claude-code-sync self-update`
+| Platform | Asset |
+|---|---|
+| Linux x86_64, static | `claude-code-sync-linux-x86_64-musl.tar.gz` |
+| Linux x86_64, glibc | `claude-code-sync-linux-x86_64.tar.gz` |
+| Linux ARM64, static | `claude-code-sync-linux-aarch64-musl.tar.gz` |
+| Linux ARM64, glibc | `claude-code-sync-linux-aarch64.tar.gz` |
+| macOS Apple Silicon | `claude-code-sync-macos-aarch64.tar.gz` |
+| macOS Intel | `claude-code-sync-macos-x86_64.tar.gz` |
+| Windows x86_64 | `claude-code-sync-windows-x86_64.exe.zip` |
+| Windows ARM64 | `claude-code-sync-windows-aarch64.exe.zip` |
+
+The static musl builds have no dependencies and run on any distro, Alpine and NixOS included.
 
 ### Cargo
 
@@ -398,145 +55,337 @@ including Alpine and NixOS.
 cargo install --locked --git https://github.com/FluffyDiscord/claude-code-sync
 ```
 
-**To update:** re-run the same command.
+To update, run the same command again. `self-update` and `sync` leave a binary in `~/.cargo/bin` alone and print this command instead.
 
-> The `claude-code-sync` crate on crates.io is the original upstream project,
-> not this fork.
+> The `claude-code-sync` crate on crates.io is the original upstream project, not this fork.
 
-## Quick Start
+You also need `git` on your `PATH`. Git LFS is optional; see [Git LFS](#git-lfs).
 
-### First-Time Setup (Interactive Onboarding)
+## Usage
 
-When you run `claude-code-sync` for the first time, an interactive onboarding wizard will guide you through setup:
+1. Create an empty **private** repository on GitHub, GitLab or any git host, and check that git can reach it:
+
+   ```bash
+   ssh -T git@github.com
+   ```
+
+   No access yet → see [Remote repository access](#remote-repository-access).
+
+2. Run the setup wizard:
+
+   ```bash
+   claude-code-sync init
+   ```
+
+   It asks for the remote URL (or a local directory), where to clone it, whether to skip attachments, how old a conversation may be, and which [artifact categories](#artifact-sync) to sync. Running any other command first starts the same wizard.
+
+3. Map each project you want to sync on this machine:
+
+   ```bash
+   claude-code-sync config --map-project /home/user/work/app
+   ```
+
+   Only mapped projects are pulled. Push sends every transcript anyway. See [Project map](#project-map).
+
+4. Sync:
+
+   ```bash
+   claude-code-sync sync
+   ```
+
+   `sync` pulls, merges, then pushes. `claude-code-sync` with no command does the same.
+
+### Add another machine
+
+1. Install, then clone the same repository:
+
+   ```bash
+   claude-code-sync init --remote git@github.com:you/claude-history.git
+   ```
+
+   The clone goes to the [config directory](#files-and-directories)`/repo`. Add `--clone --local <path>` to put it elsewhere.
+
+2. Turn on the artifact categories you want here (each machine keeps its own list):
+
+   ```bash
+   claude-code-sync config --enable-artifacts all
+   ```
+
+3. Map the projects this machine works on, under the same ids as on the first machine:
+
+   ```bash
+   claude-code-sync config --map-project app=/Users/you/src/app
+   ```
+
+4. Sync:
+
+   ```bash
+   claude-code-sync sync
+   ```
+
+Settings, skills, agents, commands, rules, plugin manifests and prompt history land in `~/.claude`.
+
+### Non-interactive setup
+
+For scripts and fresh machines, put the answers in a file:
+
+`~/.claude-code-sync-init.toml`
+
+```toml
+repo_path = "~/claude-history-sync"
+remote_url = "git@github.com:you/claude-history.git"
+clone = true
+exclude_attachments = false
+# exclude_older_than_days = 30
+enable_lfs = false
+sync_subdirectory = "projects"
+use_project_name_only = false
+
+[sync_artifacts]
+settings = true
+memory = true
+skills = true
+agents = true
+commands = true
+rules = true
+plugins = true
+prompt_history = true
+```
 
 ```bash
-# Simply run any command - onboarding starts automatically
-claude-code-sync sync
-
-# Or explicitly run onboarding
 claude-code-sync init
 ```
 
-The onboarding wizard will ask you:
-- Whether to use a remote repository or local directory
-- Where to store your sync repository
-- Remote URL (for remote repos) or path (for local)
-- Whether to exclude file attachments (images, PDFs, etc.)
-- How old conversations to sync (e.g., last 30 days)
+`init` with no flags, or any first command, reads the first file it finds:
 
-**Benefits of Interactive Onboarding:**
-- ✅ Step-by-step guidance for first-time users
-- ✅ Validates Git repository URLs and paths
-- ✅ Automatically clones remote repositories
-- ✅ Sets up sensible defaults based on your choices
-- ✅ No need to remember command-line flags
+1. `$CLAUDE_CODE_SYNC_INIT_CONFIG`
+2. `~/.claude-code-sync-init.toml`
+3. `<config dir>/init.toml`
 
-### Manual Initialization (Advanced)
+Pass a file directly with `init --config <path>`. `clone = true` needs `remote_url`.
 
-If you prefer to skip onboarding, you can initialize manually:
+`config --export` writes the current setup as `.claude-code-sync-init.toml` in the current directory. Copy it to `~` on the new machine and run `init`. Include and exclude patterns, the project map and the merge tool aren't exported.
+
+## How a pull merges
+
+Claude Code keeps each conversation as a `.jsonl` file under `~/.claude/projects/<project>/`. A pull compares this machine's copy with the repo's.
+
+| Situation | What happens |
+|---|---|
+| Session only exists on one side | Copied to the other side |
+| Same session changed on both machines | Merged message by message: every message from both copies is kept, and an edited message keeps its newer version |
+| Merge fails (damaged file) in a terminal | You see why and pick `local`, `remote`, `both (remote saved as a copy)` or `details` |
+| Merge fails with no terminal | Local copy stays; the remote one is saved as `<session>-conflict-<YYYYMMDD-HHMMSS>.jsonl` next to it |
+
+A remote version that's already saved as a `-conflict-` copy isn't saved again.
+
+Every conflict goes into a report: `claude-code-sync report`. Merge internals: [docs/architecture.md](docs/architecture.md).
+
+**Git-level conflicts.** When both machines pushed, the pull merges the two branches itself.
+
+- A file both changed only in date-times (`lastUpdated`, `modified: …`) keeps the later dates, no prompt.
+- Any other file both changed asks, per file: `remote`, `local`, `merge` (with a [merge tool](#external-merge-tool)) or `stop`.
+- `stop`, no terminal to ask in, or an unreachable remote → the merge is undone and the pull stops.
+
+## Artifact sync
+
+Each machine picks which parts of `~/.claude` to sync besides conversations. All categories start off; the setup wizard pre-selects all but `hooks`.
+
+| Category | Covers | Notes |
+|---|---|---|
+| `settings` | `settings.json`, `keybindings.json` | Paths made [machine-neutral](#machine-neutral-paths) |
+| `memory` | `~/.claude/CLAUDE.md` | Global user memory |
+| `skills` | `~/.claude/skills/` | Whole tree |
+| `agents` | `~/.claude/agents/` | Subagent definitions |
+| `commands` | `~/.claude/commands/` | Slash commands |
+| `rules` | `~/.claude/rules/` | Rule files |
+| `hooks` | `~/.claude/hooks/` | Scripts that run automatically; see below |
+| `plugins` | `plugins/installed_plugins.json`, `plugins/known_marketplaces.json` | Manifests only, never plugin caches |
+| `plans` | `~/.claude/plans/` | Plan-mode documents; may hold sensitive text |
+| `todos` | `~/.claude/todos/` | Session task lists; change often |
+| `prompt-history` | `~/.claude/history.jsonl` | Lines merged from both sides, never overwritten |
 
 ```bash
-# Create a local sync repository
-claude-code-sync init --repo ~/claude-history-backup
-
-# Or with a remote git repository
-claude-code-sync init --repo ~/claude-history-backup --remote git@github.com:username/claude-history.git
+claude-code-sync config --enable-artifacts all
+claude-code-sync config --enable-artifacts settings,skills,agents,commands,plugins,prompt-history
+claude-code-sync config --disable-artifacts todos
 ```
 
-### 2. Sync Your History
+`all` turns on everything except `hooks`. `status` shows which categories differ from the repo.
+
+**Attachments** aren't a category. Images, PDFs and each project's `memory/` folder under `~/.claude/projects/` sync unless you set `--exclude-attachments`.
+
+A `.gitignore` inside a synced folder (say `~/.claude/skills/x/.gitignore`) keeps the files it matches out of the repo.
+
+### Hooks run code
+
+**Enable `hooks` only for a repository you control.** Everything in `~/.claude/hooks/` runs automatically, and the `settings.json` that registers it syncs too. It's only turned on by name:
 
 ```bash
-# Bidirectional sync (pull then push) - RECOMMENDED
-claude-code-sync sync
-
-# Or manually:
-# Push all conversation history
-claude-code-sync push
-
-# Pull from remote
-claude-code-sync pull
+claude-code-sync config --enable-artifacts hooks
 ```
 
-### 3. Advanced Usage
+An interactive pull asks before it makes a file executable. A file the repository adds is still written without asking.
+
+### The executable bit
+
+- Only the executable bit travels; a `chmod +x` with no content change still syncs.
+- It's only ever granted, never removed. Repeat a `chmod -x` on each machine.
+- A pull never widens a local file's mode, and a file a pull creates starts private.
+- It needs `core.fileMode = true` in the sync repo, git's default everywhere but Windows checkouts.
+
+### What is never synced
+
+A built-in denylist applies in both directions and no setting overrides it:
+
+- Files: `.credentials.json`, `settings.local.json`, `.claude.json`, `stats-cache.json`, `.last-update-result.json`, `mcp-needs-auth-cache.json`, `*.pem`, `*.key`, `.env*`, `daemon*`
+- Folders: `shell-snapshots/`, `session-env/`, `file-history/`, `paste-cache/`, `cache/`, `debug/`, `statsig/`, `backups/`, `sessions/`, `.trash/`
+
+A pull refuses these paths even when the repo holds them. Every push also keeps a guard block in the repo's `.gitignore`.
+
+### Conflict policy
+
+**A pull takes only what the other machine changed.** Each machine remembers the version it last synced and compares all three.
+
+| Since the last sync | Pull does |
+|---|---|
+| Only the remote changed it | Takes the remote version |
+| Only this machine changed it | Keeps it; the next push sends it |
+| This machine deleted it (skills, agents, commands, rules, hooks) | Leaves it deleted; the next push removes it. Edited remotely → restores it |
+| The remote deleted it, this machine edited it | Keeps it and warns; the next push restores it |
+| Both changed only its dates | Keeps the later dates |
+| Both changed it | Asks `remote` / `local` (plus `merge` with a [merge tool](#external-merge-tool)) in a terminal; otherwise keeps this machine's version and warns |
+| Never synced on this machine | Takes the remote version |
+
+- Every file a pull overwrites or deletes is snapshotted first, and files it creates are recorded, so `undo pull` can put them back.
+- `pull --interactive` confirms each overwrite and each deletion.
+- `history.jsonl` is never overwritten: push and pull both merge the union of lines, so prompt history only grows. LFS-tracked copies still merge.
+
+### Memory indexes
+
+A project's `memory/MEMORY.md` merges by link target in both directions, like prompt history.
+
+- Your file keeps its headings, blank lines, prose and entry order.
+- Entries only the other side has are appended.
+- Only entry lines travel. A heading or note reaches the other machine only if your file created its copy.
+
+### Sync repository layout
+
+```
+<sync repo>/
+  .gitignore              # managed never-sync guard block
+  projects/               # transcripts and attachments (sync_subdirectory)
+  artifacts/
+    settings/  memory/  skills/  agents/  commands/  rules/
+    hooks/     plugins/ plans/   todos/   prompt-history/
+```
+
+## Machines that differ
+
+### Project map
+
+Claude Code names a project folder after its absolute path, so one project is `-home-user-work-app` on Linux and `-Users-you-src-app-renamed` on a Mac. Map it once per machine and both store it as `projects/app/`:
 
 ```bash
-# Exclude attachments (images, PDFs, etc.) - only sync .jsonl files
-claude-code-sync push --exclude-attachments
+# Linux: the id defaults to the folder name, `app`
+claude-code-sync config --map-project /home/user/work/app
 
-# Push to specific branch
-claude-code-sync push --branch main
+# Mac, where it lives elsewhere under another name
+claude-code-sync config --map-project app=/Users/you/src/app-renamed
 
-# Sync with custom message and exclude attachments
-claude-code-sync sync --message "Daily backup" --exclude-attachments
+# Drop a mapping
+claude-code-sync config --unmap-project app
 ```
+
+Mapping a project syncs it right away. Each machine writes it back into its own folder in `~/.claude/projects`, which keeps its name because Claude Code reads only that one.
+
+| Rule | |
+|---|---|
+| Id | A plain folder name |
+| Path | Absolute. `--map-project` drops a trailing slash; in `config.toml` the path must be written without one |
+| Id already taken by another path | Refused. Use another id: `--map-project personal-app=/home/user/personal/app` |
+| Two ids encoding to one folder | Refused |
+| Move an id to a new path | `--unmap-project app --map-project app=/new/path` |
+| Repo already holds the project under its encoded path | The next push moves it into `projects/app/`; a file already in `projects/app/` wins |
+
+**Only mapped projects pull.** This machine's clone downloads only mapped projects, the folders of its own projects, and the shared artifacts. Other machines' projects never land here, so `purge` here prunes only those.
+
+**Push sends every transcript of this machine.** Unmapped projects go to the repo under their encoded path as a backup. Their project memory and attachments stay here.
+
+- Push skips a folder named after another machine's home (`-home-k-…` on a Mac, `C--Users-Admin-…` on Linux) unless it's mapped.
+- A repo copy with later messages than the local one is never replaced.
+
+**To sync every project instead:**
+
+```bash
+claude-code-sync config --mapped-projects-only false
+```
+
+- The whole repo downloads.
+- Unmapped projects use their encoded path, or the folder name with `--use-project-name-only true`.
+- A file under an id this machine hasn't mapped is skipped, not written where Claude Code would never read it. Run `--map-project` here.
+- All skipped files come in one warning per pull. One line per file instead: `config --warn-each-skipped-file true`.
+
+### Machine-neutral paths
+
+`settings` and `plugins` are stored with this machine's paths replaced by `__CLAUDE_DIR__` and `__HOME__`, and written back with the local paths on pull. Any value that names a path travels: hook commands, the status line, new keys too. Only text files are rewritten.
+
+### Deletions that propagate
+
+Delete a file in `skills`, `agents`, `commands`, `rules`, `hooks` or a project's `memory/` folder, and the next push removes it from the repo; the other machines' next pull removes it there. Transcripts, other attachments, plans, todos and prompt history never propagate deletions.
+
+| Guard | Effect |
+|---|---|
+| Machine has never synced | Deletes nothing, so a fresh clone can't wipe the repo |
+| Category folder missing locally | Skipped on push |
+| Category missing from the repo | Skipped on pull, so an old branch doesn't read as "all deleted" |
+
+- Deleting a category's last file still propagates.
+- Deleted files are snapshotted: `undo pull` brings them back, and `pull --interactive` asks first.
+- `undo push` resets this machine's record for the repo; the next sync rebuilds it.
+
+How the record works: [docs/architecture.md](docs/architecture.md).
 
 ## Commands
 
+Commands other than `init`, `config` and `self-update` start the setup wizard on first run. `push`, `pull`, `sync`, `undo` and `cleanup-snapshots` accept `-v, --verbose` and `-q, --quiet`.
+
 ### `init`
 
-Initialize a new sync repository.
+Sets up the sync repository. With no flags it reads an [init file](#non-interactive-setup), or runs the wizard.
 
 ```bash
-claude-code-sync init --repo <path> [--remote <url>]
+claude-code-sync init --remote git@github.com:you/claude-history.git                    # clone into <config dir>/repo
+claude-code-sync init --clone --local ~/claude-sync --remote git@github.com:you/claude-history.git
+claude-code-sync init --local ~/claude-sync                                              # new or existing local repo
+claude-code-sync init --local ~/claude-sync --remote git@github.com:you/claude-history.git  # new local repo, adds the remote
+claude-code-sync init --config ./init.toml
 ```
 
-**Options:**
-- `--repo, -r <PATH>`: Path to the git repository for storing history
-- `--remote <URL>`: Optional remote git URL for pushing/pulling
-- `--config <PATH>`: Load configuration from TOML file (for non-interactive init)
-
-**Example:**
-```bash
-claude-code-sync init --repo ~/claude-backup --remote git@github.com:user/claude-history.git
-```
-
-#### Non-Interactive Initialization (CI/CD)
-
-For automation and headless environments, use a config file:
-
-```bash
-# Use explicit config file
-claude-code-sync init --config /path/to/init-config.toml
-
-# Or use default config file locations (checked in order):
-# 1. $CLAUDE_CODE_SYNC_INIT_CONFIG environment variable
-# 2. ~/.claude-code-sync-init.toml
-# 3. <config-dir>/init.toml
-claude-code-sync init
-```
-
-**Example config file (`~/.claude-code-sync-init.toml`):**
-```toml
-repo_path = "~/claude-history-sync"
-remote_url = "https://github.com/user/repo.git"
-clone = true
-exclude_attachments = true
-enable_lfs = true
-sync_subdirectory = "projects"
-```
+| Option | Meaning |
+|---|---|
+| `-l, --local <PATH>` | Where the sync repo lives |
+| `-r, --remote <URL>` | Remote URL: `https://`, `http://`, `git@` or `ssh://`. Alone → clones into `<config dir>/repo` |
+| `--clone` | Clone `--remote` into `--local` |
+| `-c, --config <PATH>` | Read an [init file](#non-interactive-setup) |
 
 ### `sync`
 
-**NEW!** Bidirectional sync (pull remote changes, then push local changes).
+Pulls, runs [purge](#purge) if `purge_after_sync` is on, then pushes.
 
 ```bash
-claude-code-sync sync [OPTIONS]
-```
-
-**Options:**
-- `--message, -m <MSG>`: Custom commit message for push
-- `--branch, -b <BRANCH>`: Branch to sync with (default: current branch)
-- `--exclude-attachments`: Only sync .jsonl files, exclude images/PDFs/etc.
-
-**Example:**
-```bash
+claude-code-sync sync
 claude-code-sync sync -m "Daily sync" --exclude-attachments
 ```
 
-**`sync` updates itself first.** A newer release → it downloads it, checks
-its SHA-256, replaces the binary and restarts with the same arguments. Offline
-or the check fails → it warns and syncs on the current version. A `cargo
-install` binary is left alone; `sync` prints the cargo command instead.
+| Option | Meaning |
+|---|---|
+| `-m, --message <MSG>` | Commit message |
+| `-b, --branch <BRANCH>` | Branch; default is the current one |
+| `--exclude-attachments` | Push `.jsonl` transcripts only |
+| `-i, --interactive` | Preview and confirm |
+
+**`sync` updates itself first.** A newer release → it downloads it, checks the SHA-256, replaces the binary and restarts with the same arguments. Offline, or the check fails → it warns and syncs on the current version. A `cargo install` binary is left alone and `sync` prints the cargo command.
 
 To stay on the installed version:
 
@@ -546,664 +395,442 @@ CLAUDE_CODE_SYNC_NO_UPDATE=1 claude-code-sync sync
 
 ### `push`
 
-Push local Claude Code history to the sync repository. Every transcript is
-pushed, mapped project or not; project memory and attachments follow
-`mapped_projects_only`.
+Copies local history into the sync repo, commits, and pushes to `origin`. Every transcript is pushed, mapped project or not; project memory and attachments follow `mapped_projects_only`.
 
 ```bash
-claude-code-sync push [OPTIONS]
-```
-
-**Options:**
-- `--message, -m <MSG>`: Custom commit message
-- `--push-remote`: Push to remote after committing (default: true)
-- `--branch, -b <BRANCH>`: Branch to push to (default: current branch)
-- `--exclude-attachments`: Only sync .jsonl files, exclude images/PDFs/etc.
-
-**Examples:**
-```bash
-# Basic push
 claude-code-sync push -m "Weekly backup"
-
-# Push to specific branch, excluding attachments
 claude-code-sync push --branch backup --exclude-attachments
 ```
 
+| Option | Meaning |
+|---|---|
+| `-m, --message <MSG>` | Commit message |
+| `-b, --branch <BRANCH>` | Branch; default is the current one |
+| `--exclude-attachments` | Push `.jsonl` transcripts only |
+| `--push-remote <BOOL>` | Push to `origin` after committing; default `true` |
+| `-i, --interactive` | Show the plan and confirm; no → nothing is copied or committed |
+
+**A failed push to the remote fails the command.** The commit stays in the local sync repo, and the next `push` or `sync` sends it, even with no new changes.
+
 ### `pull`
 
-Pull and merge history from the sync repository.
+Fetches the remote and merges it into `~/.claude`. See [How a pull merges](#how-a-pull-merges) and [Conflict policy](#conflict-policy).
 
 ```bash
-claude-code-sync pull [OPTIONS]
+claude-code-sync pull
+claude-code-sync pull --fetch-remote false
 ```
 
-**Options:**
-- `--fetch-remote <BOOL>`: Pull from remote before merging (default: true).
-  Diverged branches merge on their own. A file both machines changed only in
-  date-times (`lastUpdated`, `modified: …`) keeps the later dates, no prompt.
-  Any other file both changed asks, per file: `remote`, `local`, `merge` (the
-  [merge tool](#external-merge-tool)) or `stop`. `stop`, or no terminal to ask in, undoes the merge and stops the
-  pull, as does a remote that cannot be reached. Pass `--fetch-remote false` to
-  merge only what is already in the local sync repository.
-- `--branch, -b <BRANCH>`: Branch to pull from (default: current branch)
+| Option | Default | Meaning |
+|---|---|---|
+| `--fetch-remote <BOOL>` | `true` | `false` → merge only what's already in the local sync repo |
+| `-b, --branch <BRANCH>` | current | Branch to pull |
+| `-i, --interactive` | off | Preview, and confirm each overwritten or deleted file |
 
-**Example:**
-```bash
-claude-code-sync pull --branch main
-```
+> `pull --interactive` asks `Pull?` after it has already merged the remote into the sync repo. Answering no leaves `~/.claude` untouched, but the sync repo stays merged.
 
 ### `status`
 
-Show sync status and information.
+Shows the repo path, remote, branch, uncommitted changes, session counts and per-category artifact drift.
 
-```bash
-claude-code-sync status [--show-conflicts] [--show-files]
-```
-
-**Options:**
-- `--show-conflicts`: Show detailed conflict information
-- `--show-files`: Show which files would be synced
-
-**Example:**
 ```bash
 claude-code-sync status --show-conflicts --show-files
 ```
 
+| Option | Meaning |
+|---|---|
+| `--show-conflicts` | Conflicts from the last sync |
+| `--show-files` | Local session files that would sync |
+
 ### `config`
 
-Configure sync filters and settings.
+Changes settings in [the config file](#configuration). With no flags it opens a menu to switch the active repository or edit filters.
 
 ```bash
-claude-code-sync config [OPTIONS] [--show]
-```
-
-**Options:**
-- `--exclude-older-than <DAYS>`: Exclude projects older than N days
-- `--include-projects <PATTERNS>`: Include only specific project paths (comma-separated)
-- `--exclude-projects <PATTERNS>`: Exclude specific project paths (comma-separated)
-- `--exclude-attachments <true|false>`: Exclude file attachments (images, PDFs, etc.)
-- `--enable-lfs <true|false>`: Enable Git LFS for large files
-- `--lfs-patterns <PATTERNS>`: File patterns to track with LFS (comma-separated, default: `*.jsonl`)
-- `--sync-subdirectory <DIR>`: Subdirectory within sync repo for projects (default: `projects`)
-- `--enable-artifacts <NAMES>`: Enable artifact categories (comma-separated, or `all`)
-- `--disable-artifacts <NAMES>`: Disable artifact categories (comma-separated, or `all`)
-- `--show`: Show current configuration
-
-**Examples:**
-```bash
-# Exclude conversations older than 30 days
-claude-code-sync config --exclude-older-than 30
-
-# Include only specific projects
-claude-code-sync config --include-projects "*my-project*,*important-work*"
-
-# Exclude test projects
-claude-code-sync config --exclude-projects "*test*,*temp*"
-
-# Permanently exclude attachments from all syncs
-claude-code-sync config --exclude-attachments true
-
-# Enable Git LFS for large files
-claude-code-sync config --enable-lfs true --lfs-patterns "*.jsonl,*.png"
-
-# Store projects in a custom subdirectory
-claude-code-sync config --sync-subdirectory "claude-history"
-
-# Sync settings, skills, and prompt history alongside conversations
-claude-code-sync config --enable-artifacts settings,skills,prompt-history
-
-# Show current config
 claude-code-sync config --show
+claude-code-sync config --interactive      # pick a setting to change
+claude-code-sync config --wizard           # step through every setting
+claude-code-sync config --exclude-projects "*test*,*temp*"
+claude-code-sync config --enable-lfs true --lfs-patterns "*.jsonl,*.png"
 ```
+
+| Option | Config key |
+|---|---|
+| `--exclude-older-than <DAYS>` | `exclude_older_than_days` |
+| `--include-projects <PATTERNS>` | `include_patterns` |
+| `--exclude-projects <PATTERNS>` | `exclude_patterns` |
+| `--exclude-attachments <BOOL>` | `exclude_attachments` |
+| `--enable-lfs <BOOL>` | `enable_lfs` |
+| `--lfs-patterns <PATTERNS>` | `lfs_patterns` |
+| `--sync-subdirectory <DIR>` | `sync_subdirectory` |
+| `--use-project-name-only <BOOL>` | `use_project_name_only` |
+| `--enable-artifacts <NAMES>` / `--disable-artifacts <NAMES>` | `[sync_artifacts]`; names or `all` |
+| `--map-project [ID=]PATH` / `--unmap-project <ID>` | `[project_map]`; repeatable |
+| `--mapped-projects-only <BOOL>` | `mapped_projects_only` |
+| `--warn-each-skipped-file <BOOL>` | `warn_each_skipped_file` |
+| `--merge-tool <CMD>` | `merge_tool`; `""` clears it |
+| `--prefer-merge-tool <BOOL>` | `prefer_merge_tool` |
+| `--purge-older-than <DAYS>` | `purge_older_than_days`; minimum 30 |
+| `--purge-after-sync <BOOL>` | `purge_after_sync` |
+| `--show` | Print the current config |
+| `-i, --interactive` | Menu of settings |
+| `-w, --wizard` | Step-by-step wizard |
+| `--export` | Write `.claude-code-sync-init.toml` to the current directory |
+
+Pattern lists are comma-separated.
 
 ### `purge`
 
-Delete transcripts past the retention window from this machine **and** the sync
-repository. See [Purging old transcripts](#purging-old-transcripts).
+Deletes transcripts past the retention window from this machine **and** the sync repo. Removing them on one side only would bring them back on the next sync.
 
 ```bash
-# What would go, and how much space it frees
-claude-code-sync purge --dry-run
-
-# Ask, then delete (a terminal prompts; elsewhere --yes is required)
-claude-code-sync purge
-claude-code-sync purge --yes
-
-# Override the window for this run
+claude-code-sync purge --dry-run          # what would go, and how much space
+claude-code-sync purge                    # asks first
+claude-code-sync purge --yes              # for scripts; required outside a terminal
 claude-code-sync purge --older-than 365
 ```
 
-**Options:**
-- `--older-than <DAYS>`: retention window for this run (minimum 30; default: the
-  longer of 180 days and this machine's Claude Code `cleanupPeriodDays`)
-- `--dry-run`: show the plan and stop
-- `-y, --yes`: delete without asking
+| Option | Default | Meaning |
+|---|---|---|
+| `--older-than <DAYS>` | see below | Window for this run; minimum 30 |
+| `--dry-run` | off | Show the plan and stop |
+| `-y, --yes` | off | Delete without asking |
+
+**The default window is the longer of 180 days and this machine's Claude Code retention** (`cleanupPeriodDays` in `settings.json` or `settings.local.json`, 30 days if unset). Claude Code deletes those transcripts itself, so the repo never keeps fewer. A window you set wins.
+
+To purge on every sync, between the pull and the push:
+
+```bash
+claude-code-sync config --purge-older-than 365
+claude-code-sync config --purge-after-sync true
+```
+
+- A transcript's age is its last message, not the file date: a conversation pulled today is still as old as it was.
+- A transcript with no readable timestamp is never purged.
+- Each removal takes the session's `subagents/` and `tool-results/` folders and any superseded or orphaned copies with it.
+- `purge` commits the removal on its own and doesn't push it; the next `push` or `sync` sends it. With `purge_after_sync`, the removal lands in the push commit.
+- Git history keeps the purged files until you rewrite it.
+- The sync repo must have no uncommitted changes; run `push` first.
 
 ### `report`
 
-View conflict reports from previous syncs.
+Prints the conflict report from the last sync.
 
 ```bash
-claude-code-sync report [--format <FORMAT>] [--output <FILE>]
-```
-
-**Options:**
-- `--format, -f <FORMAT>`: Output format: `json`, `markdown`, or `text` (default: markdown)
-- `--output, -o <FILE>`: Output file (default: print to stdout)
-
-**Examples:**
-```bash
-# Print markdown report to console
 claude-code-sync report
-
-# Save JSON report to file
 claude-code-sync report --format json --output conflicts.json
-
-# View as markdown
-claude-code-sync report --format markdown | less
 ```
+
+| Option | Default | Meaning |
+|---|---|---|
+| `-f, --format <FORMAT>` | `markdown` | `json` or `markdown` (`md`). Any other value prints a short summary to the terminal |
+| `-o, --output <FILE>` | stdout | Write to a file; `json` or `markdown` only |
 
 ### `remote`
 
-**NEW!** Manage git remote configuration.
+Shows or changes the sync repo's git remote. Push and pull use `origin`.
 
 ```bash
-claude-code-sync remote <COMMAND>
-```
-
-**Commands:**
-- `show`: Display current remote configuration and sync directory
-- `set`: Set or update remote URL
-- `remove`: Remove a remote
-
-**Options for `set`:**
-- `--name, -n <NAME>`: Remote name (default: origin)
-- `url`: Remote URL (e.g., https://github.com/user/repo.git or git@github.com:user/repo.git)
-
-**Options for `remove`:**
-- `--name, -n <NAME>`: Remote name (default: origin)
-
-**Examples:**
-```bash
-# Show current remote and sync directory
 claude-code-sync remote show
-
-# Set/update remote URL (HTTPS)
-claude-code-sync remote set origin https://github.com/user/claude-history.git
-
-# Set/update remote URL (SSH)
-claude-code-sync remote set origin git@github.com:user/claude-history.git
-
-# Remove remote
-claude-code-sync remote remove origin
+claude-code-sync remote set git@github.com:you/claude-history.git
+claude-code-sync remote set --name origin https://github.com/you/claude-history.git
+claude-code-sync remote remove
 ```
 
-**Note:** The remote URL must start with `http://`, `https://`, or `git@` for SSH connections.
+| Subcommand | Meaning |
+|---|---|
+| `show` | Sync directory, branch and each remote's URL |
+| `set [-n NAME] <URL>` | Set or change a remote; `NAME` defaults to `origin`. URL starts with `https://`, `http://`, `git@` or `ssh://` |
+| `remove [-n NAME]` | Remove a remote; `NAME` defaults to `origin` |
+
+Setting or removing `origin` also updates the remote saved in `state.json`. With no `origin`, push only commits locally.
 
 ### `undo`
 
-**NEW in v0.2.0!** Undo the last sync operation by restoring from automatic snapshots.
+Reverses the last pull or push.
 
 ```bash
-claude-code-sync undo <OPERATION>
-```
-
-**Operations:**
-- `pull`: Undo the last pull operation (restores local files to pre-pull state)
-- `push`: Undo the last push operation (resets git repository to previous commit)
-
-**Examples:**
-```bash
-# Undo the last pull operation
+claude-code-sync undo pull --preview
 claude-code-sync undo pull
-
-# Undo the last push operation
 claude-code-sync undo push
 ```
 
-**How it works:**
-- Every pull/push operation automatically creates a snapshot before making changes
-- Snapshots are stored in `~/.claude-code-sync/snapshots/`
-- Undo operations restore files/git state from the snapshot
-- After successful undo, the snapshot is automatically deleted
-- Operation history is updated to reflect the undo
+| Subcommand | Effect |
+|---|---|
+| `pull` | Restores every file the pull changed or deleted and removes the files it created: transcripts, `-conflict-` copies and artifacts |
+| `push` | Moves the sync repo back to the commit before the push (`git reset --soft`); the pushed files stay staged |
 
-**Note:** You can only undo the most recent operation of each type. Once you run a new pull/push, the previous snapshot is replaced.
+> A file you've edited since the pull stays as it is, with a message. A pull that fails halfway is undone the same way.
+
+- `--preview` shows what would be restored, deleted and kept, then stops.
+- A successful undo deletes its snapshot and updates the history. A failed one keeps both, so you can run it again.
+- `undo push` doesn't touch the remote. If the push reached it, run `git push --force origin <branch>` in the sync repo.
 
 ### `history`
 
-**NEW in v0.2.0!** View and manage operation history.
+Lists past pulls and pushes: type, time, branch, conversations affected, added / modified / conflict / unchanged counts, and whether undo is available. The last 5 operations are kept.
 
 ```bash
-claude-code-sync history <COMMAND>
-```
-
-**Commands:**
-- `list`: List recent sync operations
-- `last`: Show detailed information about the last operation
-- `clear`: Clear all operation history
-
-**Options for `list`:**
-- `--limit, -l <N>`: Number of operations to show (default: 10)
-
-**Options for `last`:**
-- `--operation-type, -t <TYPE>`: Filter by operation type (`pull` or `push`)
-
-**Examples:**
-```bash
-# List the last 10 operations
 claude-code-sync history list
-
-# List the last 20 operations
-claude-code-sync history list --limit 20
-
-# Show details of the last operation (pull or push)
-claude-code-sync history last
-
-# Show details of the last pull operation only
 claude-code-sync history last -t pull
-
-# Show details of the last push operation only
-claude-code-sync history last -t push
-
-# Clear all operation history
+claude-code-sync history review
 claude-code-sync history clear
 ```
 
-**History Information:**
-Each history entry shows:
-- Operation type (PULL or PUSH)
-- Timestamp
-- Branch name
-- Number of conversations affected
-- Statistics (added, modified, conflicts, unchanged)
-- Snapshot availability for undo
+| Subcommand | Meaning |
+|---|---|
+| `list [-l N]` | Recent operations; `N` defaults to 10 |
+| `last [-t pull\|push]` | Details of the last operation |
+| `review [-l N]` | Pick an operation to inspect; needs a terminal |
+| `clear` | Delete the history |
 
-**History Storage:**
-- Operation history is stored in `~/.claude-code-sync/operation-history.json`
-- Up to 5 operations are kept (automatically rotated)
-- Each operation includes details about affected conversations
+### `cleanup-snapshots`
+
+Deletes old undo snapshots. A snapshot goes only when it's both past the newest `--max-count` of its type and older than `--max-age-days`.
+
+```bash
+claude-code-sync cleanup-snapshots --dry-run
+claude-code-sync cleanup-snapshots --max-count 3 --max-age-days 14
+```
+
+| Option | Default |
+|---|---|
+| `--max-count <N>` | `5` per operation type |
+| `--max-age-days <DAYS>` | `7` |
+| `--dry-run` | off |
+| `-i, --interactive` | off |
 
 ### `self-update`
 
-Update the installed binary to the latest release. It downloads the build for
-your platform, verifies its SHA-256 checksum, and replaces the running
-executable in place.
+Downloads the release for your platform, checks its SHA-256 and replaces the binary.
 
 ```bash
-# Check for a newer release without changing anything
-claude-code-sync self-update --check
-
-# Update to the latest release
+claude-code-sync self-update --check      # report only
 claude-code-sync self-update
-
-# Install a specific release (including downgrades)
-claude-code-sync self-update --to v0.3.2
-
-# Skip the confirmation (scripts)
-claude-code-sync self-update --yes
+claude-code-sync self-update --to v0.5.4  # any release, downgrades included
+claude-code-sync self-update --yes        # for scripts; required outside a terminal
 ```
 
-It shows the version change and asks before replacing the binary. Outside a
-terminal it changes nothing unless you pass `--yes`.
+| Option | Meaning |
+|---|---|
+| `--check` | Report whether an update exists |
+| `--to <VERSION>` | Install this release instead of the latest |
+| `--force` | Reinstall the current version, or replace a `cargo install` binary |
+| `-y, --yes` | Don't ask |
 
-If `cargo install` put the binary in `~/.cargo/bin`, `self-update` declines and
-prints the cargo command instead, so cargo's records stay accurate. Pass
-`--force` to replace the binary anyway.
+It shows the version change and asks first. A binary in `~/.cargo/bin` is refused with the cargo command, so cargo's records stay right; `--force` replaces it anyway.
 
-## Conflict Resolution
+## External merge tool
 
-When the same conversation session is modified on different machines, `claude-code-sync` detects this as a conflict.
-
-### Smart Merge (NEW!)
-
-**Smart merge is now the default conflict resolution strategy!** When conflicts are detected, `claude-code-sync` automatically attempts to intelligently merge both versions by:
-
-- **Analyzing message UUIDs and parent relationships**: Builds a message tree to understand conversation structure
-- **Resolving edited messages by timestamp**: If the same message was edited on both machines, keeps the newer version
-- **Preserving all conversation branches**: When conversations diverge (same parent, different continuations), keeps all branches intact
-- **Handling entries without UUIDs**: Falls back to timestamp-based merging for system events
-
-**Smart merge automatically handles:**
-- ✅ Non-overlapping changes (simple merge)
-- ✅ Message additions to different parts of the conversation
-- ✅ Conversation branches (multiple continuations from the same point)
-- ✅ Edited messages (resolved by timestamp)
-- ✅ Mixed UUID and non-UUID entries
-
-If smart merge fails (e.g., due to corrupted data), the system falls back to interactive or "keep both" resolution.
-
-### Interactive Conflict Resolution (New!)
-
-When running in an interactive terminal, `claude-code-sync` now provides a **TUI (Text User Interface)** for resolving conflicts:
+**Get `merge` next to `remote` / `local` in the per-file prompt.** It appears for a file both machines changed, and for a pulled file that differs under `pull --interactive`.
 
 ```bash
-# Pull with interactive conflict resolution
-claude-code-sync pull
-
-# Or sync (pull + push)
-claude-code-sync sync
+claude-code-sync config --merge-tool "phpstorm merge"
+claude-code-sync config --prefer-merge-tool true   # prompts start on merge
 ```
 
-**Interactive Features:**
-- 📋 **List all conflicts** with session IDs and project paths
-- 🔍 **Preview differences** between local and remote versions
-- 📊 **View statistics**: message counts, timestamps, file sizes
-- 🎯 **Choose resolution per conflict**:
-  - **Smart Merge** (combine both versions - recommended) ✨ NEW
-  - Keep Local (discard remote changes)
-  - Keep Remote (overwrite local file)
-  - Keep Both (save remote with conflict suffix)
-  - View Details (show full comparison)
+The tool runs as `<merge_tool> <local> <remote> <base> <output>`, the JetBrains argument order. Whatever it saves to `<output>` is used, even the local version unchanged.
 
-**Example Interactive Flow:**
-```
-Found 2 conflicts during pull:
+| Case | `<base>` |
+|---|---|
+| Both machines changed the file | The version both started from |
+| Pulled file differs | Empty; nothing records an ancestor |
 
-! 2 conflicts detected
-  Attempting smart merge...
-  ✓ Smart merged abc-123 (45 local + 52 remote = 90 total, 2 branches)
-  ✓ Smart merged def-456 (30 local + 35 remote = 65 total, 0 branches)
-  ✓ Successfully smart merged 2/2 conflicts
+The prompt waits 15 minutes for the tool. Change it with `CLAUDE_CODE_SYNC_MERGE_TIMEOUT_SECONDS`. `--merge-tool ""` goes back to the terminal picker.
 
-Pull complete!
-```
+## Configuration
 
-**Example: Smart Merge Failure with Interactive Fallback:**
-```
-Found 1 conflicts during pull:
-
-! 1 conflicts detected
-  Attempting smart merge...
-  ⚠ Smart merge failed for xyz-789: circular reference detected
-  Falling back to manual resolution...
-  ! 1 conflicts require manual resolution
-
-→ Running in interactive mode for remaining conflicts
-
-Conflict 1 of 1
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-Session ID: xyz-789
-Project: my-project
-Local:  45 messages, last modified 2 hours ago (15.2 KB)
-Remote: 52 messages, last modified 1 hour ago (18.5 KB)
-
-Resolve:
-❯ smart merge
-  local
-  remote
-  both (remote saved as a copy)
-  details
-```
-
-### Automatic Resolution (Non-Interactive)
-
-When not in an interactive terminal (CI/CD, scripts), conflicts are automatically resolved:
-
-**Resolution Strategy:**
-- Local version: Kept as-is
-- Remote version: Saved with suffix `-conflict-<timestamp>.jsonl`
-- A detailed conflict report is generated
-
-**Example:**
-
-If session `abc-123.jsonl` conflicts:
-- Local: `~/.claude/projects/my-project/abc-123.jsonl` (unchanged)
-- Remote: `~/.claude/projects/my-project/abc-123-conflict-20250117-143022.jsonl` (saved separately)
-
-You can then manually review both versions and decide which to keep.
-
-## Configuration File
-
-Configuration is stored in `~/.claude-code-sync.toml`:
+Settings live in `config.toml` in the [config directory](#files-and-directories). Defaults:
 
 ```toml
-# Exclude projects older than N days
-exclude_older_than_days = 30
-
-# Include only these project path patterns
-include_patterns = ["*my-project*", "*work*"]
-
-# Exclude these project path patterns
-exclude_patterns = ["*test*", "*temp*"]
-
-# Maximum file size in bytes (10MB default)
+# exclude_older_than_days = 30   # unset: no age limit
+include_patterns = []
+exclude_patterns = []
 max_file_size_bytes = 10485760
-
-# Exclude file attachments (images, PDFs, etc.)
 exclude_attachments = false
-
-# Enable Git LFS for large files
 enable_lfs = false
-
-# File patterns to track with LFS
 lfs_patterns = ["*.jsonl"]
-
-# Subdirectory within sync repo for projects
 sync_subdirectory = "projects"
-
-# Delete transcripts older than this, here and in the repo (see Purging old
-# transcripts). Unset means the longer of 180 days and this machine's own
-# Claude Code cleanupPeriodDays.
-purge_older_than_days = 365
-
-# Purge as part of every sync, between the pull and the push
-purge_after_sync = false
-
-# Warn once per file a pull cannot place, instead of one combined warning
-warn_each_skipped_file = false
-
-# Pull only the projects in [project_map]; push still sends every transcript
+use_project_name_only = false
 mapped_projects_only = true
-
-# External three-way merge command offered when a file differs or conflicts
-merge_tool = "phpstorm merge"
-
-# Start each per-file prompt on `merge` when the merge tool is offered
+# purge_older_than_days = 365    # unset: longer of 180 and cleanupPeriodDays
+purge_after_sync = false
+warn_each_skipped_file = false
+merge_tool = ""
 prefer_merge_tool = false
 
-# Artifact categories to sync alongside conversation history
-# (all default to false; see the Artifact Sync section)
 [sync_artifacts]
-settings = true
-memory = true
-skills = true
-agents = true
-commands = true
-rules = true
-hooks = true
-plugins = true
+settings = false
+memory = false
+skills = false
+agents = false
+commands = false
+rules = false
+hooks = false
+plugins = false
 plans = false
 todos = false
-prompt_history = true
+prompt_history = false
 
-# Canonical project id -> this machine's path for it (see Project map)
 [project_map]
-shop = "/home/user/work/shop-web"
+# app = "/home/user/work/app"
 ```
 
-## Sync State
+| Option | Default | Meaning |
+|---|---|---|
+| `exclude_older_than_days` | unset | Skip files not modified in this many days |
+| `include_patterns` | `[]` | Sync only paths matching one; `*` wildcard, no `*` = substring |
+| `exclude_patterns` | `[]` | Skip paths matching one |
+| `max_file_size_bytes` | `10485760` (10 MB) | Skip larger files; `0` → warning, 10 MB used |
+| `exclude_attachments` | `false` | `.jsonl` transcripts only |
+| `enable_lfs` | `false` | Store `lfs_patterns` in [Git LFS](#git-lfs) |
+| `lfs_patterns` | `["*.jsonl"]` | Files LFS tracks |
+| `sync_subdirectory` | `"projects"` | Repo folder for transcripts; must stay inside the repo, `artifacts` is reserved |
+| `use_project_name_only` | `false` | Unmapped projects stored under their folder name |
+| `mapped_projects_only` | `true` | Pull only [mapped projects](#project-map) |
+| `purge_older_than_days` | unset | [Purge](#purge) window; minimum 30 |
+| `purge_after_sync` | `false` | Purge during `sync` |
+| `warn_each_skipped_file` | `false` | One warning per unplaced file instead of one total |
+| `merge_tool` | `""` | [Merge tool](#external-merge-tool) command |
+| `prefer_merge_tool` | `false` | Prompts start on `merge` |
+| `[sync_artifacts]` | all `false` | [Artifact categories](#artifact-sync) |
+| `[project_map]` | empty | `id = "/absolute/path"` |
 
-Sync state is stored in `~/.claude-code-sync/`:
-- `state.json`: Current sync repository configuration
-- `operation-history.json`: History of sync operations (up to 5 entries)
-- `snapshots/`: Directory containing snapshots for undo operations
-- `latest-conflict-report.json`: Most recent conflict report
+`max_file_size_bytes` has no flag. Set it in MB under `config --interactive`, or edit the file.
 
-## Use Cases
-
-### Daily Backup Workflow
+### Git LFS
 
 ```bash
-# At the end of each day
-claude-code-sync push -m "Daily backup $(date +%Y-%m-%d)"
+claude-code-sync config --enable-lfs true
 ```
 
-### Multi-Machine Development
+The next push runs `git lfs install --local` in the sync repo and writes the patterns to `.gitattributes`. Install `git-lfs` first (`brew install git-lfs`, `apt install git-lfs`, or [git-lfs.com](https://git-lfs.com) on Windows).
 
-**On Machine A:**
-```bash
-claude-code-sync init --repo ~/claude-backup --remote git@github.com:user/claude-history.git
-claude-code-sync push
-```
+### Files and directories
 
-**On Machine B:**
-```bash
-claude-code-sync init --repo ~/claude-backup --remote git@github.com:user/claude-history.git
-claude-code-sync pull
-# Work on Machine B
-claude-code-sync push
-```
+| OS | Config directory |
+|---|---|
+| Linux | `$XDG_CONFIG_HOME/claude-code-sync`, or `~/.config/claude-code-sync` |
+| macOS | `~/Library/Application Support/claude-code-sync` |
+| Windows | `%APPDATA%\claude-code-sync` |
+| Other | `~/.claude-code-sync` |
 
-**Back on Machine A:**
-```bash
-claude-code-sync pull  # Merges Machine B's changes
-```
+It holds:
 
-### Automated Backup (Cron)
+| File | Content |
+|---|---|
+| `config.toml` | [Configuration](#configuration) |
+| `state.json` | Sync repo path and remote |
+| `repo/` | Default clone location |
+| `operation-history.json` | Last 5 pulls and pushes |
+| `snapshots/` | Undo snapshots |
+| `latest-conflict-report.json` | Last conflict report |
+| `claude-code-sync.log` | One startup line per run |
+| `session-summaries.json` | Transcript summary cache |
+| `init.toml` | Optional [init file](#non-interactive-setup) |
 
-Add to your crontab:
+### Environment variables
 
-```bash
-# Backup Claude Code history every night at 2 AM
-0 2 * * * /usr/local/bin/claude-code-sync push --message "Automated backup" >> ~/claude-code-sync.log 2>&1
-```
-
-## Architecture
-
-### Module Overview
-
-- **parser.rs**: JSONL conversation file parser
-- **git/**: Git access via CLI commands
-  - **attributes.rs**: Managed `.gitattributes` rules
-  - **lfs.rs**: Git LFS support
-- **sync/**: Core sync engine with push/pull logic and snapshot integration
-- **conflict.rs**: Conflict detection and resolution
-- **interactive_conflict.rs**: Interactive TUI for conflict resolution
-- **filter.rs**: Configuration and filtering system
-- **report.rs**: Conflict reporting in JSON/Markdown formats
-- **history/**: Operation history tracking and management
-- **undo/**: Snapshot-based undo functionality for pull/push operations
-- **onboarding.rs**: Interactive first-time setup wizard with config file support
-- **logger.rs**: Enhanced logging system with file and console output
-- **main.rs**: CLI interface (using `clap`)
-
-### File Format
-
-Claude Code stores conversations in JSONL format:
-
-```json
-{"type":"user","uuid":"...","sessionId":"...","timestamp":"...","message":{...}}
-{"type":"assistant","uuid":"...","sessionId":"...","timestamp":"...","message":{...}}
-{"type":"file-history-snapshot","messageId":"...","snapshot":{...}}
-```
-
-Each line is a separate JSON object representing a conversation event.
-
-## Dependencies
-
-- `clap`: CLI argument parsing
-- `serde` + `serde_json`: JSON parsing
-- `toml`: Configuration parsing
-- `anyhow`: Error handling
-- `chrono`: Timestamp handling
-- `walkdir`: Directory traversal
-- `colored`: Terminal colors
-- `dirs`: Cross-platform directory paths
-- `uuid`: Snapshot identification
-- `base64`: Binary file encoding in snapshots
-- `inquire`: Interactive prompts and TUI menus
-- `log`: Logging facade
-- `env_logger`: Console logging implementation
-- `atty`: Terminal detection for interactive mode
-
-**Note:** Git operations are performed via CLI commands, not library bindings. This ensures compatibility with git hooks, LFS, and credential helpers.
-
-## Security Considerations
-
-- Conversation history may contain sensitive information
-- Use private git repositories for remote storage
-- Consider encrypting the git repository for additional security
-- SSH keys or access tokens are recommended for git authentication
+| Variable | Effect |
+|---|---|
+| `CLAUDE_CODE_SYNC_NO_UPDATE` | Set → `sync` skips the update check |
+| `CLAUDE_CODE_SYNC_INIT_CONFIG` | Path to an [init file](#non-interactive-setup) |
+| `CLAUDE_CODE_SYNC_CONFIG_DIR` | Use `<value>/claude-code-sync` as the config directory |
+| `CLAUDE_CODE_SYNC_CLAUDE_DIR` | Use this instead of `~/.claude` |
+| `CLAUDE_CODE_SYNC_MERGE_TIMEOUT_SECONDS` | Merge tool wait; default 900 |
+| `RUST_LOG` | Console log level; default `info` |
 
 ## Logging
 
-`claude-code-sync` provides comprehensive logging to help you track operations and troubleshoot issues.
-
-### Console Logging
-
-Control console output with the `RUST_LOG` environment variable:
+Console output follows `RUST_LOG`: `trace`, `debug`, `info` (default), `warn`, `error` or `off`.
 
 ```bash
-# Show all debug messages
 RUST_LOG=debug claude-code-sync sync
-
-# Only show errors
-RUST_LOG=error claude-code-sync push
-
-# Only show warnings and errors
-RUST_LOG=warn claude-code-sync pull
-
-# Show info, warnings, and errors (default)
-claude-code-sync sync
-
-# Disable console output (file logging continues)
-RUST_LOG=off claude-code-sync status
 ```
 
-**Log Levels:**
-- `trace` - Everything (very verbose)
-- `debug` - Debug information and above
-- `info` - Informational messages, warnings, and errors (default)
-- `warn` - Warnings and errors only
-- `error` - Errors only
-- `off` - No console output
+Log messages go to the console only. `claude-code-sync.log` in the [config directory](#files-and-directories) gets one startup line per run. Over 10 MB it's renamed to `claude-code-sync.log.old` on the next start.
 
-### File Logging
+## Scheduled sync
 
-All operations are automatically logged to a file, regardless of console settings:
+Cron, every night at 2:00:
 
-**Log File Locations:**
-- **Linux**: `~/.config/claude-code-sync/claude-code-sync.log` or `$XDG_CONFIG_HOME/claude-code-sync/claude-code-sync.log`
-- **macOS**: `~/Library/Application Support/claude-code-sync/claude-code-sync.log`
-- **Windows**: `%APPDATA%\claude-code-sync\claude-code-sync.log`
-
-**File Logging Features:**
-- ✅ Captures all log levels (trace to error)
-- ✅ Persists across sessions
-- ✅ Useful for debugging and audit trails
-- ✅ Automatically rotated to prevent excessive disk usage
-
-**Example:**
 ```bash
-# Run sync silently, check logs later
-RUST_LOG=off claude-code-sync sync
-
-# View the log file
-cat ~/.config/claude-code-sync/claude-code-sync.log
+0 2 * * * $HOME/.local/bin/claude-code-sync sync -m "Nightly sync" >> $HOME/claude-code-sync-cron.log 2>&1
 ```
+
+Without a terminal nothing can ask you:
+
+- An artifact both machines changed keeps this machine's version and warns.
+- A transcript that won't merge keeps the local copy and saves the remote one beside it.
+- A git-level conflict stops the pull.
+
+Add `CLAUDE_CODE_SYNC_NO_UPDATE=1` to stay on one version.
+
+## Remote repository access
+
+claude-code-sync runs `git`, so it uses whatever access git already has. **Test with plain git first:** `git -C <sync repo> push origin <branch>`.
+
+### SSH (recommended)
+
+1. Create a key, if you have none:
+
+   ```bash
+   ssh-keygen -t ed25519 -C "you@example.com"
+   ```
+
+2. Load it into the agent:
+
+   ```bash
+   eval "$(ssh-agent -s)"
+   ssh-add ~/.ssh/id_ed25519
+   ```
+
+3. Add `~/.ssh/id_ed25519.pub` to your host: [GitHub](https://github.com/settings/ssh/new) or [GitLab](https://gitlab.com/-/profile/keys).
+
+4. Test:
+
+   ```bash
+   ssh -T git@github.com
+   ```
+
+5. Use the `git@…` URL in `init`, or switch an existing repo: `claude-code-sync remote set git@github.com:you/claude-history.git`.
+
+### HTTPS
+
+Use a personal access token as the password (GitHub: a classic token with `repo` scope). Pick a credential helper so git remembers it:
+
+| Platform | Command |
+|---|---|
+| macOS | `git config --global credential.helper osxkeychain` |
+| Linux | `git config --global credential.helper /usr/share/doc/git/contrib/credential/libsecret/git-credential-libsecret` (needs `libsecret`) |
+| WSL | `git config --global credential.helper "/mnt/c/Program\ Files/Git/mingw64/bin/git-credential-manager.exe"` |
+| Any, in memory | `git config --global credential.helper 'cache --timeout=28800'` |
+| Any, on disk | `git config --global credential.helper store` (plain text in `~/.git-credentials`) |
+
+Then push once by hand to store the token: `git -C <sync repo> push origin <branch>`.
 
 ## Troubleshooting
 
-### "Sync not initialized"
+| What you see | Cause | Fix |
+|---|---|---|
+| Pull takes no transcripts | No project mapped, `mapped_projects_only = true` | `config --map-project <path>` |
+| `Failed to push: authentication required` / `could not read Username` | Git has no credentials | Set up [SSH or a credential helper](#remote-repository-access) |
+| `Permission denied (publickey)` | Key not loaded | `eval "$(ssh-agent -s)" && ssh-add ~/.ssh/id_ed25519` |
+| Push rejected by branch protection | The host blocks pushes to that branch | Lift the protection, or sync another branch with `-b` |
+| Pull stops on a conflict in cron or CI | No terminal to ask in | Run `claude-code-sync pull` in a terminal once |
+| `the sync repository has uncommitted changes` on purge | Unpushed changes in the sync repo | `claude-code-sync push`, then purge |
+| `git-lfs is not installed` | LFS on, binary missing | Install `git-lfs` |
+| Conflicts on every pull | One session open on two machines at once, clock skew, or different filters per machine | Sync before switching machines; align filters |
+| Network error on push | Remote unreachable | `git ls-remote <url>`; check `git -C <sync repo> remote -v` |
 
-Run `claude-code-sync init` first to set up the sync repository, or let the interactive onboarding guide you.
+More detail: `RUST_LOG=debug`, or `GIT_TRACE=1 GIT_CURL_VERBOSE=1 claude-code-sync push` for git itself.
 
-### "Failed to push to remote"
+## Security
 
-Check:
-- Git remote URL is correct
-- SSH keys or credentials are configured
-- Network connectivity
-- Remote repository permissions
-
-### Conflicts on every pull
-
-This may indicate:
-- Clock skew between machines
-- Different filter configurations
-- Same conversations being actively used on multiple machines
+- Transcripts can hold anything you pasted into Claude Code. Use a private repository.
+- Prefer SSH keys with a passphrase over stored tokens.
+- `plans` and `hooks` carry extra risk; see [Artifact sync](#artifact-sync).
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md).
+Development setup and workflow: [CONTRIBUTING.md](CONTRIBUTING.md). Internals: [docs/architecture.md](docs/architecture.md).
