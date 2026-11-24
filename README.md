@@ -520,6 +520,17 @@ claude-code-sync sync [OPTIONS]
 claude-code-sync sync -m "Daily sync" --exclude-attachments
 ```
 
+**`sync` updates itself first.** A newer release → it downloads it, checks
+its SHA-256, replaces the binary and restarts with the same arguments. Offline
+or the check fails → it warns and syncs on the current version. A `cargo
+install` binary is left alone; `sync` prints the cargo command instead.
+
+To stay on the installed version:
+
+```bash
+CLAUDE_CODE_SYNC_NO_UPDATE=1 claude-code-sync sync
+```
+
 ### `push`
 
 Push local Claude Code history to the sync repository.

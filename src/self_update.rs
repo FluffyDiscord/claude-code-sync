@@ -3,7 +3,8 @@ use colored::Colorize;
 use semver::Version;
 use sha2::{Digest, Sha256};
 use std::io::Read;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 const REPO_URL: &str = env!("CARGO_PKG_REPOSITORY");
 const BIN_NAME: &str = if cfg!(windows) {
@@ -13,6 +14,9 @@ const BIN_NAME: &str = if cfg!(windows) {
 };
 
 const MAX_DOWNLOAD_BYTES: u64 = 200 * 1024 * 1024;
+const CHECK_TIMEOUT: Duration = Duration::from_secs(10);
+const DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(120);
+const SKIP_UPDATE_ENV: &str = "CLAUDE_CODE_SYNC_NO_UPDATE";
 
 fn release_asset() -> Option<&'static str> {
     let asset = match (
@@ -74,10 +78,10 @@ pub(crate) fn sha256_hex(bytes: &[u8]) -> String {
         .collect()
 }
 
-fn agent(follow_redirects: bool) -> ureq::Agent {
+fn agent(follow_redirects: bool, timeout: Duration) -> ureq::Agent {
     let config = ureq::Agent::config_builder()
         .user_agent(concat!("claude-code-sync/", env!("CARGO_PKG_VERSION")))
-        .timeout_global(Some(std::time::Duration::from_secs(120)))
+        .timeout_global(Some(timeout))
         .max_redirects(if follow_redirects { 10 } else { 0 });
     #[cfg(windows)]
     let config = config.tls_config(
@@ -90,7 +94,7 @@ fn agent(follow_redirects: bool) -> ureq::Agent {
 
 fn latest_tag() -> Result<String> {
     let url = format!("{REPO_URL}/releases/latest");
-    let response = agent(false)
+    let response = agent(false, CHECK_TIMEOUT)
         .get(&url)
         .call()
         .with_context(|| format!("failed to query {url}"))?;
@@ -110,7 +114,7 @@ fn latest_tag() -> Result<String> {
 }
 
 fn download(url: &str) -> Result<Vec<u8>> {
-    agent(true)
+    agent(true, DOWNLOAD_TIMEOUT)
         .get(url)
         .call()
         .with_context(|| format!("failed to download {url}"))?
@@ -164,6 +168,88 @@ fn install_binary(binary: &[u8]) -> Result<()> {
     )
 }
 
+fn install_release(tag: &str, asset: &str) -> Result<()> {
+    let url = format!("{REPO_URL}/releases/download/{tag}/{asset}");
+    println!("{} {} ({})...", "Downloading".cyan(), asset, tag);
+    let archive = download(&url)?;
+    let checksum_file = String::from_utf8(download(&format!("{url}.sha256"))?)
+        .context("checksum file is not valid UTF-8")?;
+    let expected = parse_checksum(&checksum_file)
+        .ok_or_else(|| anyhow!("malformed checksum file for {asset}"))?;
+    let actual = sha256_hex(&archive);
+    if expected != actual {
+        bail!("checksum mismatch for {asset}: expected {expected}, got {actual}");
+    }
+
+    let binary = extract_binary(&archive)?;
+    install_binary(&binary)
+}
+
+fn running_exe() -> Result<PathBuf> {
+    let exe = std::env::current_exe().context("cannot locate the running executable")?;
+    Ok(exe.canonicalize().unwrap_or(exe))
+}
+
+pub fn update_before_sync() -> Result<()> {
+    let update_is_skipped = std::env::var_os(SKIP_UPDATE_ENV).is_some();
+    if update_is_skipped {
+        return Ok(());
+    }
+    let current = parse_tag(env!("CARGO_PKG_VERSION"))?;
+    let tag = latest_tag()?;
+    let wanted = parse_tag(&tag)?;
+    if wanted <= current {
+        return Ok(());
+    }
+
+    let exe = running_exe()?;
+    let installed_by_cargo = is_installed_by_cargo(&exe);
+    if installed_by_cargo {
+        println!(
+            "{} {} → {} (run {})",
+            "Update available:".yellow().bold(),
+            current,
+            wanted.to_string().green(),
+            get_cargo_install_command().cyan()
+        );
+        return Ok(());
+    }
+    let Some(asset) = release_asset() else {
+        return Ok(());
+    };
+
+    install_release(&tag, asset)?;
+    println!(
+        "{} claude-code-sync {} → {}, restarting",
+        "Updated".green().bold(),
+        current,
+        wanted
+    );
+    restart(&exe)
+}
+
+fn restart(exe: &Path) -> Result<()> {
+    let mut command = std::process::Command::new(exe);
+    command
+        .args(std::env::args_os().skip(1))
+        .env(SKIP_UPDATE_ENV, "1");
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        let error = command.exec();
+        Err(error).with_context(|| format!("failed to restart {}", exe.display()))
+    }
+
+    #[cfg(not(unix))]
+    {
+        let status = command
+            .status()
+            .with_context(|| format!("failed to restart {}", exe.display()))?;
+        std::process::exit(status.code().unwrap_or(1));
+    }
+}
+
 pub fn self_update(
     check_only: bool,
     target: Option<&str>,
@@ -207,8 +293,7 @@ pub fn self_update(
         return Ok(());
     }
 
-    let exe = std::env::current_exe().context("cannot locate the running executable")?;
-    let exe = exe.canonicalize().unwrap_or(exe);
+    let exe = running_exe()?;
     let installed_by_cargo = is_installed_by_cargo(&exe);
     if installed_by_cargo && !force {
         bail!(
@@ -226,7 +311,6 @@ pub fn self_update(
             get_cargo_install_command()
         )
     })?;
-    let url = format!("{REPO_URL}/releases/download/{tag}/{asset}");
 
     let question = format!("Replace claude-code-sync {current} with {wanted}?");
     let rerun_hint = format!(
@@ -240,19 +324,7 @@ pub fn self_update(
         return Ok(());
     }
 
-    println!("{} {} ({})...", "Downloading".cyan(), asset, tag);
-    let archive = download(&url)?;
-    let checksum_file = String::from_utf8(download(&format!("{url}.sha256"))?)
-        .context("checksum file is not valid UTF-8")?;
-    let expected = parse_checksum(&checksum_file)
-        .ok_or_else(|| anyhow!("malformed checksum file for {asset}"))?;
-    let actual = sha256_hex(&archive);
-    if expected != actual {
-        bail!("checksum mismatch for {asset}: expected {expected}, got {actual}");
-    }
-
-    let binary = extract_binary(&archive)?;
-    install_binary(&binary)?;
+    install_release(&tag, asset)?;
 
     println!(
         "{} claude-code-sync {} → {} ({})",

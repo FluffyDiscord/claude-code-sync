@@ -569,6 +569,9 @@ fn main() -> Result<()> {
                 VerbosityLevel::Normal
             };
 
+            if let Err(error) = self_update::update_before_sync() {
+                log::warn!("Update check or restart failed: {error:#}");
+            }
             sync::sync_bidirectional(
                 message.as_deref(),
                 branch.as_deref(),
