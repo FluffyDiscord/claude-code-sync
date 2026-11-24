@@ -157,6 +157,10 @@ pub fn push_history(
     if exclude_attachments {
         filter.exclude_attachments = true;
     }
+    let every_transcript = FilterConfig {
+        mapped_projects_only: false,
+        ..filter.clone()
+    };
 
     if filter.enable_lfs {
         if verbosity != VerbosityLevel::Quiet {
@@ -176,11 +180,10 @@ pub fn push_history(
         .unwrap_or_else(|| "main".to_string());
 
     println!("  {} conversation sessions...", "Discovering".cyan());
-    let sessions = discover_sessions(&claude_dir, &filter)?;
+    let sessions = discover_sessions(&claude_dir, &every_transcript)?;
     println!("  {} {} sessions", "Found".green(), sessions.len());
 
-    let names_can_collide = filter.use_project_name_only && !filter.mapped_projects_only;
-    if names_can_collide {
+    if filter.use_project_name_only {
         let collisions = find_colliding_projects(&claude_dir);
         if !collisions.is_empty() {
             println!();
@@ -214,9 +217,13 @@ pub fn push_history(
 
     let projects_dir = state.sync_repo_path.join(&filter.sync_subdirectory);
     fs::create_dir_all(&projects_dir)?;
+    let moved = crate::project_map::move_into_mapped_ids(&filter, &projects_dir)?;
+    for project in &moved {
+        println!("  {} {}", "Moved".cyan(), project);
+    }
 
     println!("  {} sessions to sync repository...", "Copying".cyan());
-    let plan = plan_push(&sessions, &claude_dir, &projects_dir, &filter)?;
+    let plan = plan_push(&sessions, &claude_dir, &projects_dir, &every_transcript)?;
     let added_count = plan.added;
     let modified_count = plan.modified;
     let unchanged_count = plan.unchanged;

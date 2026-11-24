@@ -507,6 +507,16 @@ fn tracked_in_projects_missing_here(
         .collect()
 }
 
+fn project_folder_is_gone(desc: &CategoryDescriptor, category_root: &Path, rel: &Path) -> bool {
+    if desc.dest != DestRoot::SessionTree {
+        return false;
+    }
+    let Some((project, _)) = crate::project_map::split_project_path(rel) else {
+        return false;
+    };
+    !category_root.join(project).is_dir()
+}
+
 fn project_is_synced_here(filter: &FilterConfig, projects_dir: &Path, rel: &Path) -> bool {
     let Some((project, _)) = crate::project_map::split_project_path(rel) else {
         return false;
@@ -1017,6 +1027,10 @@ pub fn plan_pull(claude_dir: &Path, repo_root: &Path, filter: &FilterConfig) -> 
             if is_unsafe_rel_path(&rel) || is_denied(&rel) {
                 log::warn!("Refusing denied/unsafe tracked path: {gone}");
                 plan.skipped += 1;
+                continue;
+            }
+            let project_left_the_repo = project_folder_is_gone(desc, &category_root, &rel);
+            if project_left_the_repo {
                 continue;
             }
             let Ok(local_path) = local_destination(desc, claude_dir, &rel, filter) else {

@@ -213,8 +213,8 @@ enum Commands {
         #[arg(long, value_name = "ID")]
         unmap_project: Vec<String>,
 
-        /// Sync only the projects mapped with --map-project; leave every
-        /// other project, here and in the repo, alone (default: true)
+        /// Pull only the projects mapped with --map-project; push still sends
+        /// every transcript (default: true)
         #[arg(long, value_name = "BOOL")]
         mapped_projects_only: Option<bool>,
 

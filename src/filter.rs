@@ -349,14 +349,14 @@ pub fn set_mapped_projects_only(mapped_only: bool) -> Result<()> {
 
     println!(
         "{}",
-        format!("Projects synced: {}", projects_synced_label(mapped_only)).green()
+        format!("Projects pulled: {}", projects_pulled_label(mapped_only)).green()
     );
     let nothing_is_mapped = config.project_map.is_empty();
-    let syncs_nothing = mapped_only && nothing_is_mapped;
-    if syncs_nothing {
+    let pulls_nothing = mapped_only && nothing_is_mapped;
+    if pulls_nothing {
         println!(
             "{}",
-            "No project is mapped yet, so nothing syncs. Map one: \
+            "No project is mapped yet, so pull takes no transcripts. Map one: \
              claude-code-sync config --map-project <path>"
                 .yellow()
         );
@@ -364,7 +364,7 @@ pub fn set_mapped_projects_only(mapped_only: bool) -> Result<()> {
     Ok(())
 }
 
-fn projects_synced_label(mapped_only: bool) -> &'static str {
+fn projects_pulled_label(mapped_only: bool) -> &'static str {
     if mapped_only {
         "mapped only"
     } else {
@@ -693,8 +693,8 @@ pub fn show_config() -> Result<()> {
     }
     println!(
         "  {}: {}",
-        "Projects synced".cyan(),
-        projects_synced_label(config.mapped_projects_only).cyan()
+        "Projects pulled".cyan(),
+        projects_pulled_label(config.mapped_projects_only).cyan()
     );
 
     println!("  {}:", "Artifact sync".cyan());

@@ -189,14 +189,22 @@ claude-code-sync config --unmap-project app
 ```
 
 The repo then stores that project under `projects/app/`, and each machine
-materializes it back into its own directory. Ids are plain directory names,
+materializes it back into its own directory. The next push moves a copy the
+repo already holds under the encoded path (`projects/-home-user-src-app/`)
+into `projects/app/`; a file already in `projects/app/` wins. The local folder
+in `~/.claude/projects` keeps its name, because Claude Code reads only that one. Ids are plain directory names,
 paths must be absolute and spelled exactly as the project's own path (a trailing
 slash encodes differently), and two ids pointing at one directory are refused.
 
-**Only mapped projects sync.** Mapping a project syncs it right away. This
-machine's copy of the sync repo holds and downloads only its mapped projects,
-plus shared settings and artifacts. Other machines' projects never land here,
-so `purge` here prunes only the mapped projects in the repo.
+**Only mapped projects pull.** Mapping a project syncs it right away. This
+machine's copy of the sync repo downloads only its mapped projects and the
+folders of its own projects, plus shared settings and artifacts. Other machines' projects never land here, so
+`purge` here prunes only the mapped projects and this machine's own
+transcripts in the repo.
+
+**Push sends every transcript.** Transcripts of unmapped projects go to the
+repo too, under their encoded path, so the repo backs up all of them. Their
+project memory and attachments stay here.
 
 > A sync repo cloned by an older version keeps what it already downloaded.
 > Re-clone it to free the space.
@@ -533,7 +541,9 @@ CLAUDE_CODE_SYNC_NO_UPDATE=1 claude-code-sync sync
 
 ### `push`
 
-Push local Claude Code history to the sync repository.
+Push local Claude Code history to the sync repository. Every transcript is
+pushed, mapped project or not; project memory and attachments follow
+`mapped_projects_only`.
 
 ```bash
 claude-code-sync push [OPTIONS]
@@ -978,7 +988,7 @@ purge_after_sync = false
 # Warn once per file a pull cannot place, instead of one combined warning
 warn_each_skipped_file = false
 
-# Sync only the projects in [project_map]; leave every other one alone
+# Pull only the projects in [project_map]; push still sends every transcript
 mapped_projects_only = true
 
 # External three-way merge command offered when a file differs or conflicts

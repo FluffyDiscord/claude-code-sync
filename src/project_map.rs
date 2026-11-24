@@ -1,4 +1,4 @@
-use anyhow::{bail, Result};
+use anyhow::{bail, Context, Result};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
@@ -114,15 +114,93 @@ pub fn is_synced_path(filter: &FilterConfig, relative: &Path) -> bool {
     }
 }
 
-pub fn checkout_directories(filter: &FilterConfig) -> Vec<String> {
-    let mut directories = vec![crate::artifacts::registry::ARTIFACTS_SUBDIR.to_string()];
+pub fn checkout_directories(filter: &FilterConfig, local_projects_dir: &Path) -> Vec<String> {
+    let mut project_dirs = Vec::new();
     for (id, path) in &filter.project_map {
-        for project_dir in [id.clone(), encode_project_path(path)] {
-            let repo_path = Path::new(&filter.sync_subdirectory).join(project_dir);
-            directories.push(slash_separated(&repo_path));
+        project_dirs.push(id.clone());
+        project_dirs.push(encode_project_path(path));
+    }
+    let local_entries = std::fs::read_dir(local_projects_dir).into_iter().flatten();
+    for entry in local_entries.filter_map(|entry| entry.ok()) {
+        let is_project = entry.path().is_dir();
+        if !is_project {
+            continue;
+        }
+        let file_name = entry.file_name();
+        let Some(encoded) = file_name.to_str() else {
+            continue;
+        };
+        project_dirs.push(repo_dir_name_in(filter, local_projects_dir, encoded));
+    }
+
+    let mut directories = vec![crate::artifacts::registry::ARTIFACTS_SUBDIR.to_string()];
+    for project_dir in project_dirs {
+        let repo_path = Path::new(&filter.sync_subdirectory).join(project_dir);
+        let directory = slash_separated(&repo_path);
+        let is_listed = directories.contains(&directory);
+        if !is_listed {
+            directories.push(directory);
         }
     }
     directories
+}
+
+pub fn move_into_mapped_ids(
+    filter: &FilterConfig,
+    repo_projects_dir: &Path,
+) -> Result<Vec<String>> {
+    let mut moves = Vec::new();
+    for (id, path) in &filter.project_map {
+        let encoded = encode_project_path(path);
+        if encoded == *id {
+            continue;
+        }
+        let encoded_dir = repo_projects_dir.join(&encoded);
+        let has_encoded_copy = encoded_dir.is_dir();
+        if !has_encoded_copy {
+            continue;
+        }
+        move_files(&encoded_dir, &repo_projects_dir.join(id))?;
+        std::fs::remove_dir_all(&encoded_dir)
+            .with_context(|| format!("Failed to remove {}", encoded_dir.display()))?;
+        moves.push(format!("{encoded} → {id}"));
+    }
+    Ok(moves)
+}
+
+fn move_files(from: &Path, to: &Path) -> Result<()> {
+    for entry in walkdir::WalkDir::new(from) {
+        let entry = entry?;
+        let is_file = entry.file_type().is_file();
+        if !is_file {
+            continue;
+        }
+        let target = to.join(entry.path().strip_prefix(from)?);
+        let id_copy_exists = target.exists();
+        if id_copy_exists {
+            warn_if_dropped_copy_differs(entry.path(), &target);
+            continue;
+        }
+        if let Some(parent) = target.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::rename(entry.path(), &target)
+            .with_context(|| format!("Failed to move {}", entry.path().display()))?;
+    }
+    Ok(())
+}
+
+fn warn_if_dropped_copy_differs(dropped: &Path, kept: &Path) {
+    let dropped_bytes = std::fs::read(dropped).ok();
+    let kept_bytes = std::fs::read(kept).ok();
+    if dropped_bytes == kept_bytes {
+        return;
+    }
+    log::warn!(
+        "{} differs from {}; kept the second. Undo with `claude-code-sync undo push` if it held newer content",
+        dropped.display(),
+        kept.display()
+    );
 }
 
 fn slash_separated(path: &Path) -> String {
@@ -430,16 +508,21 @@ mod tests {
     }
 
     #[test]
-    fn the_checkout_holds_artifacts_and_each_mapped_project_by_id_and_encoded_path() {
+    fn the_checkout_holds_artifacts_mapped_projects_and_this_machines_projects() {
         let mut filter = mapped(&[("shop", "/home/user/work/shop")]);
         filter.sync_subdirectory = "history/projects".to_string();
+        let local = tempfile::TempDir::new().unwrap();
+        for project in ["-home-user-work-shop", "-home-user-other"] {
+            std::fs::create_dir(local.path().join(project)).unwrap();
+        }
 
         assert_eq!(
-            checkout_directories(&filter),
+            checkout_directories(&filter, local.path()),
             [
                 "artifacts",
                 "history/projects/shop",
-                "history/projects/-home-user-work-shop"
+                "history/projects/-home-user-work-shop",
+                "history/projects/-home-user-other"
             ]
         );
     }

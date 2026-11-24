@@ -25,9 +25,10 @@ pub(crate) fn limit_checkout(
     repo: &crate::git::GitRepo,
     filter: &crate::filter::FilterConfig,
 ) -> Result<()> {
+    let local_projects_dir = discovery::claude_projects_dir()?;
     let directories = filter
         .mapped_projects_only
-        .then(|| crate::project_map::checkout_directories(filter));
+        .then(|| crate::project_map::checkout_directories(filter, &local_projects_dir));
     let limited = repo.limit_checkout(directories.as_deref());
     let Err(error) = limited else {
         return Ok(());

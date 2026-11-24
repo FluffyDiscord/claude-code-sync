@@ -65,6 +65,19 @@ impl Machine {
         self.home.join(".claude")
     }
 
+    fn use_remote(&self, sync_repo: &Path) {
+        let state = SyncState {
+            sync_repo_path: sync_repo.to_path_buf(),
+            has_remote: true,
+            is_cloned_repo: false,
+        };
+        fs::write(
+            self.config.join("claude-code-sync/state.json"),
+            serde_json::to_string_pretty(&state).unwrap(),
+        )
+        .unwrap();
+    }
+
     fn write_filter(&self, filter: &FilterConfig) {
         fs::write(
             self.config.join("claude-code-sync/config.toml"),
@@ -252,6 +265,170 @@ fn test_full_pipeline_second_push_creates_no_commit() {
     assert_eq!(report.artifacts.total_modified(), 0);
     let log = git(repo.path(), &["log", "--oneline"]);
     assert_eq!(log.lines().count(), 1, "no empty second commit: {log}");
+}
+
+#[test]
+#[serial]
+fn test_push_sends_every_transcript_while_pull_takes_only_mapped_projects() {
+    let _restore = EnvRestore::capture();
+    let root = TempDir::new().unwrap();
+    let origin = root.path().join("origin.git");
+    fs::create_dir_all(&origin).unwrap();
+    git(&origin, &["init", "--quiet", "--bare", "-b", "main"]);
+    git(&origin, &["config", "uploadpack.allowFilter", "true"]);
+    git(
+        &origin,
+        &["config", "uploadpack.allowAnySHA1InWant", "true"],
+    );
+    let origin_url = origin.to_string_lossy().into_owned();
+
+    let repo_a = root.path().join("a");
+    init_git_repo(&repo_a);
+    git(&repo_a, &["symbolic-ref", "HEAD", "refs/heads/main"]);
+    git(&repo_a, &["remote", "add", "origin", &origin_url]);
+    let mut mapped_only = FilterConfig {
+        sync_artifacts: ArtifactToggles::all_enabled(),
+        mapped_projects_only: true,
+        ..Default::default()
+    };
+    mapped_only
+        .project_map
+        .insert("webapp".to_string(), PathBuf::from("/home/user/webapp"));
+
+    let machine_a = Machine::new(&repo_a);
+    machine_a.use_remote(&repo_a);
+    machine_a.activate();
+    machine_a.write_filter(&mapped_only);
+    seed_full_claude_home(&machine_a.claude());
+    let unmapped = machine_a.claude().join("projects/-home-user-other");
+    fs::create_dir_all(unmapped.join("memory")).unwrap();
+    fs::write(
+        unmapped.join("bbbb-2222.jsonl"),
+        "{\"type\":\"user\",\"sessionId\":\"bbbb-2222\",\"uuid\":\"u2\",\"timestamp\":\"2025-01-02T00:00:00Z\",\"cwd\":\"/home/user/other\"}\n",
+    )
+    .unwrap();
+    fs::write(unmapped.join("memory/MEMORY.md"), b"# other memory\n").unwrap();
+
+    let first = push_history(Some("A"), true, None, false, false, VerbosityLevel::Quiet).unwrap();
+    assert_eq!(first.added, 2, "mapped and unmapped transcripts pushed");
+    let tracked = git(&repo_a, &["ls-files"]);
+    assert!(
+        tracked.contains("projects/webapp/aaaa-1111.jsonl"),
+        "{tracked}"
+    );
+    assert!(
+        tracked.contains("projects/-home-user-other/bbbb-2222.jsonl"),
+        "{tracked}"
+    );
+    assert!(
+        !tracked.contains("projects/-home-user-other/memory"),
+        "artifacts stay mapped-only: {tracked}"
+    );
+
+    let repo_b = root.path().join("b");
+    claude_code_sync::git::GitRepo::clone(&origin_url, &repo_b).unwrap();
+    git(&repo_b, &["config", "user.name", "B"]);
+    git(&repo_b, &["config", "user.email", "b@local"]);
+    let machine_b = Machine::new(&repo_b);
+    machine_b.use_remote(&repo_b);
+    machine_b.activate();
+    machine_b.write_filter(&mapped_only);
+    let b_webapp = machine_b.claude().join("projects/-home-user-webapp");
+    fs::create_dir_all(&b_webapp).unwrap();
+    pull_history(true, None, false, VerbosityLevel::Quiet).unwrap();
+
+    assert!(b_webapp.join("aaaa-1111.jsonl").is_file());
+    assert!(!machine_b
+        .claude()
+        .join("projects/-home-user-other")
+        .exists());
+
+    fs::write(
+        b_webapp.join("cccc-3333.jsonl"),
+        "{\"type\":\"user\",\"sessionId\":\"cccc-3333\",\"uuid\":\"u3\",\"timestamp\":\"2025-01-03T00:00:00Z\",\"cwd\":\"/home/user/webapp\"}\n",
+    )
+    .unwrap();
+    push_history(Some("B"), true, None, false, false, VerbosityLevel::Quiet).unwrap();
+
+    machine_a.activate();
+    pull_history(true, None, false, VerbosityLevel::Quiet).unwrap();
+    assert!(
+        repo_a
+            .join("projects/-home-user-other/bbbb-2222.jsonl")
+            .is_file(),
+        "a pull keeps this machine's unmapped transcripts checked out"
+    );
+
+    let second = push_history(Some("A2"), true, None, false, false, VerbosityLevel::Quiet).unwrap();
+    assert_eq!(second.added, 0, "unmapped transcript is not re-added");
+    assert_eq!(second.modified, 0);
+}
+
+#[test]
+#[serial]
+fn test_mapping_a_project_moves_its_repo_copy_under_the_id() {
+    let _restore = EnvRestore::capture();
+    let repo = TempDir::new().unwrap();
+    init_git_repo(repo.path());
+
+    let machine_a = Machine::new(repo.path());
+    machine_a.activate();
+    seed_full_claude_home(&machine_a.claude());
+    push_history(Some("A"), false, None, false, false, VerbosityLevel::Quiet).unwrap();
+    let tracked = git(repo.path(), &["ls-files"]);
+    assert!(tracked.contains("projects/-home-user-webapp/memory/MEMORY.md"));
+
+    let machine_b = Machine::new(repo.path());
+    machine_b.activate();
+    pull_history(false, None, false, VerbosityLevel::Quiet).unwrap();
+    let b_webapp = machine_b.claude().join("projects/-home-user-webapp");
+    assert!(b_webapp.join("memory/MEMORY.md").is_file());
+
+    let mut mapped = FilterConfig {
+        sync_artifacts: ArtifactToggles::all_enabled(),
+        ..Default::default()
+    };
+    mapped
+        .project_map
+        .insert("webapp".to_string(), PathBuf::from("/home/user/webapp"));
+    machine_a.activate();
+    machine_a.write_filter(&mapped);
+    push_history(Some("A2"), false, None, false, false, VerbosityLevel::Quiet).unwrap();
+
+    let tracked = git(repo.path(), &["ls-files"]);
+    assert!(
+        !tracked.contains("projects/-home-user-webapp/"),
+        "{tracked}"
+    );
+    for file in ["aaaa-1111.jsonl", "diagram.png", "memory/MEMORY.md"] {
+        assert!(
+            tracked.contains(&format!("projects/webapp/{file}")),
+            "{tracked}"
+        );
+    }
+
+    let local_webapp = machine_a.claude().join("projects/-home-user-webapp");
+    pull_history(false, None, false, VerbosityLevel::Quiet).unwrap();
+    assert!(local_webapp.join("aaaa-1111.jsonl").is_file());
+    assert_eq!(
+        fs::read(local_webapp.join("memory/MEMORY.md")).unwrap(),
+        b"# project memory\n"
+    );
+
+    machine_b.activate();
+    pull_history(false, None, false, VerbosityLevel::Quiet).unwrap();
+    assert!(
+        b_webapp.join("memory/MEMORY.md").is_file(),
+        "a machine without the mapping keeps the memory it synced before the move"
+    );
+
+    machine_b.write_filter(&mapped);
+    pull_history(false, None, false, VerbosityLevel::Quiet).unwrap();
+    assert!(b_webapp.join("aaaa-1111.jsonl").is_file());
+    assert!(
+        b_webapp.join("memory/MEMORY.md").is_file(),
+        "a machine that maps the project keeps its memory too"
+    );
 }
 
 #[test]
