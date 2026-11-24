@@ -2,7 +2,7 @@ name: Build Binaries
 
 # The release build matrix, shared by two callers:
 #   - release.yml calls it with a tag, and every asset is uploaded to that release.
-#   - a push to main that touches the build inputs runs it without a tag, so a
+#   - a push to master that touches the build inputs runs it without a tag, so a
 #     broken target surfaces before the next release rather than halfway through it.
 # Asset names are a public interface: `self-update` and the README's download
 # links construct them. Rename with care.
@@ -14,7 +14,7 @@ on:
         type: string
         required: true
   push:
-    branches: [main]
+    branches: [master]
     paths:
       - Cargo.toml
       - Cargo.lock
@@ -62,7 +62,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
         with:
-          # Empty on a push to main, which checks out the pushed commit.
+          # Empty on a push to master, which checks out the pushed commit.
           ref: ${{ inputs.tag }}
 
       - name: Install mise

@@ -43,7 +43,7 @@ Thank you for your interest in contributing to claude-code-sync! This document p
 
 ## Development Workflow
 
-**Work goes straight to `main`.**
+**Work goes straight to `master`.**
 
 ### 1. Make Your Changes
 
@@ -106,7 +106,7 @@ Closes #123
 ### 4. Push
 
 ```bash
-git push origin main
+git push origin master
 ```
 
 ## Coding Standards
@@ -230,7 +230,7 @@ All new code should include tests:
 cargo check
 git commit -am "chore: release 0.4.15"
 git tag v0.4.15
-git push origin main v0.4.15
+git push origin master v0.4.15
 ```
 
 Follow [Semantic Versioning](https://semver.org/).
